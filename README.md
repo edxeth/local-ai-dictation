@@ -2,6 +2,8 @@
 
 GPU‑accelerated or CPU‑only microphone transcription using NVIDIA NeMo Parakeet TDT 0.6B v3, with a clean CLI and a debug mode for device/timing diagnostics.
 
+<img width="1145" height="697" alt="wezterm-gui_Ms1V17gQZh" src="https://github.com/user-attachments/assets/43cb0377-44ec-4888-a620-b99a2f52a1c0" />
+
 ## Features
 
 - GPU/CPU switch via `--cpu`, with explicit device placement and verification using PyTorch device checks.
