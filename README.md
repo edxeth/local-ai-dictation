@@ -1,4 +1,4 @@
-# Parakeet Dictation (GPU/CPU)
+# Free and open-source local AI dictation tool
 
 GPU‑accelerated or CPU‑only microphone transcription using NVIDIA NeMo Parakeet TDT 0.6B v3, with a clean CLI and a debug mode for device/timing diagnostics.
 
