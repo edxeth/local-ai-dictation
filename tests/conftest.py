@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
+import sys
 
-import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+pytest = importlib.import_module("pytest")
 
 
 @pytest.fixture(autouse=True)
-def force_offline_test_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def force_offline_test_environment(monkeypatch) -> None:
     """Keep the automated test suite deterministic and offline-safe."""
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")

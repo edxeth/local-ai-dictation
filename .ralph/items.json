@@ -108,7 +108,7 @@
         "Confirm `--output-file` writes the same rendered content to disk without suppressing stdout behavior unexpectedly",
         "Simulate clipboard failure and verify the command still succeeds while surfacing only the allowed warning behavior"
       ],
-      "passes": false,
+      "passes": true,
       "regression_notes": ""
     },
     {

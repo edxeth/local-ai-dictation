@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import importlib
 import json
 import math
 from pathlib import Path
+import sys
 
-from parakeet.benchmark import load_expected_transcript
-from parakeet.cli import main
-from parakeet.types import TranscriptionResult
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+load_expected_transcript = importlib.import_module("parakeet.benchmark").load_expected_transcript
+main = importlib.import_module("parakeet.cli").main
+TranscriptionResult = importlib.import_module("parakeet.types").TranscriptionResult
 
 
 class _FakeEngine:

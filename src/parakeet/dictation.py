@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import importlib
 import io
 import logging
 import os
@@ -17,20 +18,19 @@ import time
 import warnings
 import wave
 from contextlib import nullcontext
-from typing import Any
+from typing import Any, cast
 
 from parakeet.audio import list_input_devices
 from parakeet.config import resolve_config
 from parakeet.errors import (
     AUDIO_BACKEND_UNREACHABLE,
-    CLIPBOARD_UNAVAILABLE,
     MODEL_IMPORT_FAILED,
     MODEL_TRANSCRIBE_FAILED,
-    AppError,
     AudioError,
     ExitCode,
     ModelError,
 )
+from parakeet.output import emit_transcription_result
 from parakeet.types import DictationConfig, TranscriptionEngine, TranscriptionResult
 
 
@@ -152,7 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     return add_cli_arguments(parser)
 
 
-def configure_logging(config: DictationConfig) -> None:
+def configure_logging(config: DictationConfig, *, status_stream=None) -> None:
     if config.debug:
         if config.log_file != "-":
             try:
@@ -166,7 +166,7 @@ def configure_logging(config: DictationConfig) -> None:
                 level=logging.DEBUG,
                 force=True,
             )
-            print(f"Debug logs -> {config.log_file}")
+            print(f"Debug logs -> {config.log_file}", file=status_stream or sys.stdout)
         else:
             logging.basicConfig(level=logging.DEBUG, force=True)
     else:
@@ -238,8 +238,12 @@ class _silence_context:
         return False
 
 
+def _status_stream(config: DictationConfig):
+    return sys.stderr if config.format == "json" else sys.stdout
+
+
 def spinner_animation(stop_event: threading.Event, prefix: str, stream=None) -> None:
-    stream = stream or sys.__stdout__
+    stream = stream or sys.stdout
     chars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
     idx = 0
     try:
@@ -253,10 +257,11 @@ def spinner_animation(stop_event: threading.Event, prefix: str, stream=None) -> 
         stream.flush()
 
 
-def wait_for_enter_interruptible(show_prompt: bool = False) -> bool:
+def wait_for_enter_interruptible(show_prompt: bool = False, *, stream=None) -> bool:
+    prompt_stream = stream or sys.stdout
     if show_prompt:
-        sys.__stdout__.write("Press ENTER to start recording (Ctrl+C to exit)...\n")
-        sys.__stdout__.flush()
+        prompt_stream.write("Press ENTER to start recording (Ctrl+C to exit)...\n")
+        prompt_stream.flush()
     while not _shutdown_event.is_set():
         readable, _, _ = select.select([sys.stdin], [], [], 0.1)
         if readable:
@@ -278,10 +283,10 @@ def _load_runtime_dependencies(debug: bool):
         os.environ.setdefault("NEMO_LOG_LEVEL", "ERROR")
         _silence_start()
     try:
-        import nemo.collections.asr as nemo_asr
-        import pyaudio
-        import pyperclip
-        import torch
+        nemo_asr = importlib.import_module("nemo.collections.asr")
+        pyaudio = importlib.import_module("pyaudio")
+        pyperclip = importlib.import_module("pyperclip")
+        torch = importlib.import_module("torch")
     finally:
         if not debug:
             _silence_stop()
@@ -311,6 +316,7 @@ def record_audio_interruptible(
     pyaudio_module: Any,
     sample_rate: int = 16000,
 ) -> bytes | None:
+    status_stream = _status_stream(config)
     ctx = SilentSTDERR() if not config.debug else nullcontext()
     with ctx:
         pa = pyaudio_module.PyAudio()
@@ -325,7 +331,7 @@ def record_audio_interruptible(
             )
         except Exception as exc:
             error = AudioError(AUDIO_BACKEND_UNREACHABLE, str(exc))
-            print(f"❌ Audio error: {error}")
+            print(f"❌ Audio error: {error}", file=status_stream)
             try:
                 pa.terminate()
             except Exception:
@@ -333,7 +339,7 @@ def record_audio_interruptible(
             return None
 
     frames: list[bytes] = []
-    print("🎤 Recording...", flush=True)
+    print("🎤 Recording...", file=status_stream, flush=True)
 
     ctx = SilentSTDERR() if not config.debug else nullcontext()
     with ctx:
@@ -360,7 +366,7 @@ def _load_model(config: DictationConfig, nemo_asr: Any, torch_module: Any) -> tu
     spinner_thread = threading.Thread(
         target=spinner_animation,
         args=(stop_spinner, "⏳ Loading model"),
-        kwargs={"stream": sys.__stdout__},
+        kwargs={"stream": _status_stream(config)},
         daemon=True,
     )
     spinner_thread.start()
@@ -398,7 +404,7 @@ def _transcribe_once(
     spinner_thread = threading.Thread(
         target=spinner_animation,
         args=(stop_spinner, "🤖 Generating..."),
-        kwargs={"stream": sys.__stdout__},
+        kwargs={"stream": _status_stream(config)},
         daemon=True,
     )
     spinner_thread.start()
@@ -424,8 +430,9 @@ def _transcribe_once(
 
 def run_dictation(args: argparse.Namespace) -> int:
     config = resolve_config(args, env=os.environ)
-    configure_logging(config)
-    print("Starting...", flush=True)
+    status_stream = _status_stream(config)
+    configure_logging(config, status_stream=status_stream)
+    print("Starting...", file=status_stream, flush=True)
 
     nemo_asr, pyaudio_module, pyperclip_module, torch_module = _load_runtime_dependencies(
         config.debug
@@ -440,35 +447,40 @@ def run_dictation(args: argparse.Namespace) -> int:
     try:
         model, use_cuda, load_start, load_end = _load_model(config, nemo_asr, torch_module)
     except ModelError as exc:
-        print(f"❌ Error: {exc}")
+        print(f"❌ Error: {exc}", file=status_stream)
         return int(ExitCode.ERROR)
 
     if _shutdown_event.is_set():
         return int(ExitCode.OK)
 
-    print("🚀 PARAKEET TDT 0.6B V3")
+    print("🚀 PARAKEET TDT 0.6B V3", file=status_stream)
     if torch_module.cuda.is_available():
-        print(f"✅ GPU: {torch_module.cuda.get_device_name(0)}")
-    print("=" * 60)
-    print("📝 Press ENTER to start → Speak → Press ENTER to stop")
-    print("   Ctrl+C to exit")
-    print("=" * 60 + "\n")
+        print(f"✅ GPU: {torch_module.cuda.get_device_name(0)}", file=status_stream)
+    print("=" * 60, file=status_stream)
+    print("📝 Press ENTER to start → Speak → Press ENTER to stop", file=status_stream)
+    print("   Ctrl+C to exit", file=status_stream)
+    print("=" * 60 + "\n", file=status_stream)
 
     if config.debug:
-        print(f"Model device: {next(model.parameters()).device}")
+        model_parameters = cast(Any, model).parameters()
+        print(f"Model device: {next(model_parameters).device}", file=status_stream)
         if use_cuda:
             capability = torch_module.cuda.get_device_capability()
-            print(f"CUDA capability: {capability[0]}.{capability[1]}")
+            print(f"CUDA capability: {capability[0]}.{capability[1]}", file=status_stream)
             print(
-                f"GPU alloc (MiB) after load: {torch_module.cuda.memory_allocated() / 1024**2:.2f}"
+                f"GPU alloc (MiB) after load: {torch_module.cuda.memory_allocated() / 1024**2:.2f}",
+                file=status_stream,
             )
-        print(f"Model load time: {load_end - load_start:.3f}s")
+        print(f"Model load time: {load_end - load_start:.3f}s", file=status_stream)
 
     next_wait_shows_prompt = False
 
     try:
         while not _shutdown_event.is_set():
-            if not wait_for_enter_interruptible(show_prompt=next_wait_shows_prompt):
+            if not wait_for_enter_interruptible(
+                show_prompt=next_wait_shows_prompt,
+                stream=status_stream,
+            ):
                 break
 
             sample_rate = 16000
@@ -484,7 +496,7 @@ def run_dictation(args: argparse.Namespace) -> int:
                     config, model, audio_data, sample_rate
                 )
             except ModelError as exc:
-                print(f"❌ Error: {exc}")
+                print(f"❌ Error: {exc}", file=status_stream)
                 next_wait_shows_prompt = True
                 continue
 
@@ -495,24 +507,23 @@ def run_dictation(args: argparse.Namespace) -> int:
                     pass
                 break
 
-            print(f"📝 {transcription.text}\n")
-
-            if config.clipboard:
-                try:
-                    pyperclip_module.copy(transcription.text)
-                except Exception as exc:
-                    warning = AppError(CLIPBOARD_UNAVAILABLE, str(exc))
-                    if config.debug:
-                        print(f"Clipboard warning: {warning}")
+            emit_transcription_result(
+                transcription,
+                config,
+                pyperclip_module=pyperclip_module,
+                status_stream=status_stream,
+            )
 
             if config.debug:
                 seconds = len(audio_data) / (2 * sample_rate)
                 print(
-                    f"Audio length: {seconds:.2f}s | Record: {record_end - record_start:.3f}s | Infer: {infer_end - infer_start:.3f}s"
+                    f"Audio length: {seconds:.2f}s | Record: {record_end - record_start:.3f}s | Infer: {infer_end - infer_start:.3f}s",
+                    file=status_stream,
                 )
                 if use_cuda:
                     print(
-                        f"GPU alloc (MiB) after infer: {torch_module.cuda.memory_allocated() / 1024**2:.2f}"
+                        f"GPU alloc (MiB) after infer: {torch_module.cuda.memory_allocated() / 1024**2:.2f}",
+                        file=status_stream,
                     )
 
             try:
