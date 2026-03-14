@@ -31,7 +31,7 @@
         "Exercise the configuration path with automated tests that cover all precedence layers",
         "Verify the resulting runtime configuration matches the expected winning values for each precedence case"
       ],
-      "passes": false,
+      "passes": true,
       "regression_notes": ""
     },
     {

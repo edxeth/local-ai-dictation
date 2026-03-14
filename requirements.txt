@@ -3,3 +3,4 @@ nemo_toolkit[asr]
 pyaudio
 numpy<2.0
 pyperclip
+tomli>=2; python_version < '3.11'

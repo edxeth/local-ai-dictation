@@ -19,6 +19,7 @@ import wave
 from contextlib import nullcontext
 from typing import Any
 
+from parakeet.config import resolve_config
 from parakeet.errors import (
     AUDIO_BACKEND_UNREACHABLE,
     CLIPBOARD_UNAVAILABLE,
@@ -72,22 +73,56 @@ HELP_EPILOG = """Examples:
 """
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="parakeet dictation",
-        description=HELP_DESC,
-        epilog=HELP_EPILOG,
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
+def add_cli_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument(
         "-d",
         "--debug",
         action="store_true",
+        default=None,
         help="Verbose diagnostics: device, timings, GPU memory (logs to file unless --log-file=-)",
     )
-    parser.add_argument("--cpu", action="store_true", help="Force CPU inference")
+    parser.add_argument("--cpu", action="store_true", default=None, help="Force CPU inference")
     parser.add_argument(
-        "--no-clipboard", action="store_true", help="Do not copy transcript to clipboard"
+        "--vad",
+        action="store_true",
+        default=None,
+        help="Enable VAD-driven auto-stop when supported by the runtime",
+    )
+    parser.add_argument(
+        "--max-silence-ms",
+        type=int,
+        default=None,
+        help="Silence duration required before VAD auto-stop becomes eligible",
+    )
+    parser.add_argument(
+        "--min-speech-ms",
+        type=int,
+        default=None,
+        help="Minimum cumulative voiced duration before VAD stop can trigger",
+    )
+    parser.add_argument(
+        "--vad-mode",
+        type=int,
+        choices=[0, 1, 2, 3],
+        default=None,
+        help="WebRTC-VAD aggressiveness",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default=None,
+        help="Transcript output format",
+    )
+    parser.add_argument(
+        "--output-file",
+        default=None,
+        help="Optional transcript output file path",
+    )
+    parser.add_argument(
+        "--clipboard",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable clipboard copy",
     )
     parser.add_argument(
         "--log-file",
@@ -98,9 +133,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--list-devices", action="store_true", help="List audio input devices and exit"
     )
     parser.add_argument(
-        "--input-device", type=int, default=None, help="PyAudio input device index"
+        "--input-device",
+        type=str,
+        default=None,
+        help="PyAudio input device index or exact device name",
     )
     return parser
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="parakeet dictation",
+        description=HELP_DESC,
+        epilog=HELP_EPILOG,
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    return add_cli_arguments(parser)
 
 
 def configure_logging(config: DictationConfig) -> None:
@@ -395,7 +443,7 @@ def _transcribe_once(
 
 
 def run_dictation(args: argparse.Namespace) -> int:
-    config = DictationConfig.from_namespace(args)
+    config = resolve_config(args, env=os.environ)
     configure_logging(config)
     print("Starting...", flush=True)
 

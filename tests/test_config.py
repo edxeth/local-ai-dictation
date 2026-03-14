@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+from parakeet.config import resolve_config
+from parakeet.dictation import build_parser
+
+
+def _parse(argv: list[str]):
+    return build_parser().parse_args(argv)
+
+
+def test_defaults_apply_when_no_overrides(tmp_path):
+    config = resolve_config(_parse([]), env={}, config_path=tmp_path / "missing.toml")
+
+    assert config.cpu is False
+    assert config.input_device is None
+    assert config.vad is False
+    assert config.max_silence_ms == 1200
+    assert config.min_speech_ms == 300
+    assert config.vad_mode == 2
+    assert config.format == "text"
+    assert config.output_file is None
+    assert config.clipboard is True
+    assert config.debug is False
+
+
+
+def test_config_file_overrides_defaults(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+        cpu = true
+        input_device = "USB Mic"
+        vad = true
+        max_silence_ms = 1800
+        min_speech_ms = 450
+        vad_mode = 1
+        format = "json"
+        output_file = "transcript.json"
+        clipboard = false
+        debug = true
+        """.strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = resolve_config(_parse([]), env={}, config_path=config_path)
+
+    assert config.cpu is True
+    assert config.input_device == "USB Mic"
+    assert config.vad is True
+    assert config.max_silence_ms == 1800
+    assert config.min_speech_ms == 450
+    assert config.vad_mode == 1
+    assert config.format == "json"
+    assert config.output_file == "transcript.json"
+    assert config.clipboard is False
+    assert config.debug is True
+
+
+
+def test_environment_overrides_config_file(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+        cpu = false
+        input_device = "USB Mic"
+        vad = false
+        max_silence_ms = 1800
+        min_speech_ms = 450
+        vad_mode = 1
+        format = "text"
+        output_file = "from-config.txt"
+        clipboard = true
+        debug = false
+        """.strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    env = {
+        "PARAKEET_CPU": "1",
+        "PARAKEET_INPUT_DEVICE": "9",
+        "PARAKEET_VAD": "true",
+        "PARAKEET_MAX_SILENCE_MS": "900",
+        "PARAKEET_MIN_SPEECH_MS": "700",
+        "PARAKEET_VAD_MODE": "3",
+        "PARAKEET_FORMAT": "json",
+        "PARAKEET_OUTPUT_FILE": "from-env.json",
+        "PARAKEET_CLIPBOARD": "0",
+        "PARAKEET_DEBUG": "yes",
+    }
+
+    config = resolve_config(_parse([]), env=env, config_path=config_path)
+
+    assert config.cpu is True
+    assert config.input_device == 9
+    assert config.vad is True
+    assert config.max_silence_ms == 900
+    assert config.min_speech_ms == 700
+    assert config.vad_mode == 3
+    assert config.format == "json"
+    assert config.output_file == "from-env.json"
+    assert config.clipboard is False
+    assert config.debug is True
+
+
+
+def test_cli_overrides_environment(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+        cpu = false
+        input_device = "USB Mic"
+        vad = false
+        max_silence_ms = 1800
+        min_speech_ms = 450
+        vad_mode = 1
+        format = "text"
+        output_file = "from-config.txt"
+        clipboard = true
+        debug = false
+        """.strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    env = {
+        "PARAKEET_CPU": "0",
+        "PARAKEET_INPUT_DEVICE": "9",
+        "PARAKEET_VAD": "false",
+        "PARAKEET_MAX_SILENCE_MS": "900",
+        "PARAKEET_MIN_SPEECH_MS": "700",
+        "PARAKEET_VAD_MODE": "3",
+        "PARAKEET_FORMAT": "text",
+        "PARAKEET_OUTPUT_FILE": "from-env.json",
+        "PARAKEET_CLIPBOARD": "1",
+        "PARAKEET_DEBUG": "false",
+    }
+
+    args = _parse(
+        [
+            "--cpu",
+            "--input-device",
+            "Studio Mic",
+            "--vad",
+            "--max-silence-ms",
+            "1500",
+            "--min-speech-ms",
+            "350",
+            "--vad-mode",
+            "2",
+            "--format",
+            "json",
+            "--output-file",
+            "from-cli.json",
+            "--no-clipboard",
+            "--debug",
+        ]
+    )
+    config = resolve_config(args, env=env, config_path=config_path)
+
+    assert config.cpu is True
+    assert config.input_device == "Studio Mic"
+    assert config.vad is True
+    assert config.max_silence_ms == 1500
+    assert config.min_speech_ms == 350
+    assert config.vad_mode == 2
+    assert config.format == "json"
+    assert config.output_file == "from-cli.json"
+    assert config.clipboard is False
+    assert config.debug is True
