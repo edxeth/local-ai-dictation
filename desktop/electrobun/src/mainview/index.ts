@@ -89,6 +89,23 @@ function formatTimestamp(timestamp: number | null): string {
   return new Date(timestamp * 1000).toLocaleTimeString();
 }
 
+function renderHotkey(accelerator: string): string {
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+  const keyMap: Record<string, string> = {
+    CommandOrControl: isMac ? "⌘" : "Ctrl",
+    Command: "⌘",
+    Control: "Ctrl",
+    Alt: isMac ? "⌥" : "Alt",
+    Option: "⌥",
+    Shift: "⇧",
+    Super: isMac ? "⌃" : "Win",
+  };
+  const parts = accelerator.split("+").map((part) => part.trim()).filter(Boolean);
+  return `<span class="hotkey-display">${parts
+    .map((part) => `<span class="hotkey-key">${keyMap[part] || part}</span>`)
+    .join("")}</span>`;
+}
+
 function setBusy(busy: boolean) {
   toggleButton.disabled = busy;
   refreshButton.disabled = busy;
@@ -152,7 +169,7 @@ function renderState(viewState: BridgeViewState) {
   statusBadge.textContent = viewState.connected ? viewState.session.state : "Disconnected";
   statusBadge.className = `badge ${sessionState}`;
 
-  hotkeyValue.textContent = viewState.hotkey;
+  hotkeyValue.innerHTML = renderHotkey(viewState.hotkey);
   bridgeUrl.textContent = viewState.bridgeUrl;
   bridgeCommand.textContent = viewState.bridgeStartCommand;
   renderHistory(viewState.session.history || []);

@@ -194,15 +194,18 @@ h1 {
 }
 
 .transcript-card {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
 }
 
 .history-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 280px;
+  flex: 1 1 auto;
+  min-height: 120px;
   overflow: auto;
   margin-top: 10px;
 }
@@ -278,6 +281,28 @@ button.primary {
 
 #statusLine {
   max-width: 100%;
+}
+
+.hotkey-display {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.hotkey-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  background: rgba(7, 10, 20, 0.9);
+  border: 1px solid rgba(142, 156, 255, 0.2);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  color: #eef2ff;
 }
 
 #historyList {
