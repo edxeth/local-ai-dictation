@@ -75,6 +75,7 @@ const bridgeUrl = document.getElementById("bridgeUrl") as HTMLDivElement;
 const bridgeCommand = document.getElementById("bridgeCommand") as HTMLPreElement;
 const historyMeta = document.getElementById("historyMeta") as HTMLDivElement;
 const historyList = document.getElementById("historyList") as HTMLDivElement;
+const showMoreButton = document.getElementById("showMoreButton") as HTMLButtonElement;
 const errorBox = document.getElementById("errorBox") as HTMLPreElement;
 const refreshButton = document.getElementById("refreshButton") as HTMLButtonElement;
 
@@ -83,6 +84,7 @@ window.addEventListener("error", (event) => {
 });
 
 let currentState: BridgeViewState | null = null;
+let visibleHistoryCount = 10;
 
 function formatTimestamp(timestamp: number | null): string {
   if (!timestamp) return "—";
@@ -131,13 +133,14 @@ function renderHistory(items: TranscriptHistoryItem[]) {
   if (!items.length) {
     historyMeta.textContent = "No transcripts yet.";
     historyList.innerHTML = `<div class="history-empty">No transcripts yet.</div>`;
+    showMoreButton.classList.add("hidden");
     return;
   }
 
-  historyMeta.textContent = `${items.length} transcript${items.length === 1 ? "" : "s"}`;
-  historyList.innerHTML = items
-    .slice()
-    .reverse()
+  const total = items.length;
+  const visibleItems = items.slice().reverse().slice(0, visibleHistoryCount);
+  historyMeta.textContent = `${total} transcript${total === 1 ? "" : "s"}`;
+  historyList.innerHTML = visibleItems
     .map((item) => {
       const payload = item.payload;
       const cancelled = Boolean(payload.metadata?.cancelled_before_recording);
@@ -156,6 +159,7 @@ function renderHistory(items: TranscriptHistoryItem[]) {
     })
     .join("");
 
+  showMoreButton.classList.toggle("hidden", visibleHistoryCount >= total);
   historyList.querySelectorAll<HTMLButtonElement>(".history-copy").forEach((button) => {
     button.addEventListener("click", () => {
       void copyTranscript(decodeURIComponent(button.dataset.copy || ""));
@@ -164,6 +168,9 @@ function renderHistory(items: TranscriptHistoryItem[]) {
 }
 
 function renderState(viewState: BridgeViewState) {
+  if (currentState && viewState.session.history.length > currentState.session.history.length) {
+    visibleHistoryCount = Math.max(visibleHistoryCount, 10);
+  }
   currentState = viewState;
   const sessionState = viewState.connected ? viewState.session.state : "offline";
   statusBadge.textContent = viewState.connected ? viewState.session.state : "Disconnected";
@@ -249,6 +256,12 @@ toggleButton.addEventListener("click", () => {
 });
 refreshButton.addEventListener("click", () => {
   void refreshState();
+});
+showMoreButton.addEventListener("click", () => {
+  visibleHistoryCount += 10;
+  if (currentState) {
+    renderHistory(currentState.session.history || []);
+  }
 });
 window.addEventListener("keydown", (event) => {
   const pressedR = event.key.toLowerCase() === "r";

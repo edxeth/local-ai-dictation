@@ -121,6 +121,27 @@ h1 {
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
 }
 
+.collapsible-card {
+  padding-top: 10px;
+}
+
+.collapsible-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+}
+
+.collapsible-summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary-hint {
+  color: #9aa7e8;
+  font-size: 12px;
+}
+
 .badge {
   border-radius: 999px;
   padding: 8px 12px;
@@ -208,6 +229,10 @@ h1 {
   min-height: 120px;
   overflow: auto;
   margin-top: 10px;
+}
+
+.hidden {
+  display: none !important;
 }
 
 .history-empty,
@@ -306,9 +331,14 @@ button.primary {
 }
 
 #historyList {
-  max-height: 260px;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.history-more {
+  margin-top: 10px;
+  align-self: flex-start;
 }
 
 #errorBox {

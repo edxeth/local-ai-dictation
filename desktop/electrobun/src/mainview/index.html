@@ -34,12 +34,16 @@
         <p id="statusLine" class="status-line">Waiting for bridge status…</p>
       </section>
 
-      <section class="card">
-        <div class="label">Bridge URL</div>
+      <details class="card collapsible-card" id="bridgeSection">
+        <summary class="collapsible-summary">
+          <span class="label">Bridge connection</span>
+          <span class="summary-hint">Show details</span>
+        </summary>
+        <div class="label top-gap">Bridge URL</div>
         <div id="bridgeUrl" class="mono">—</div>
         <div class="label top-gap">Run this in WSL</div>
         <pre id="bridgeCommand" class="command">—</pre>
-      </section>
+      </details>
 
       <section class="card transcript-card">
         <div class="row spread middle">
@@ -50,12 +54,16 @@
         <div id="historyList" class="history-list">
           <div class="history-empty">No transcripts yet.</div>
         </div>
+        <button id="showMoreButton" class="secondary history-more hidden">Show 10 more</button>
       </section>
 
-      <section class="card debug-card">
-        <div class="label">Bridge diagnostics</div>
+      <details class="card collapsible-card debug-card" id="diagnosticsSection">
+        <summary class="collapsible-summary">
+          <span class="label">Bridge diagnostics</span>
+          <span class="summary-hint">Show logs</span>
+        </summary>
         <pre id="errorBox" class="error-box">No bridge errors.</pre>
-      </section>
+      </details>
     </div>
     <script src="index.js"></script>
   </body>
