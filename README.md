@@ -171,12 +171,22 @@ Exit codes:
 
 ## Desktop bridge and Windows app
 
-For a small Windows control surface with a button, tray menu, and global hotkey, use the opt-in bridge plus the Electrobun app.
+The repo includes an Electrobun desktop app in `desktop/electrobun/` that talks to `parakeet bridge` over localhost.
 
-Start the backend bridge in WSL first:
+Startup order:
+
+1. Start the bridge in WSL:
 
 ```bash
 parakeet bridge --host 127.0.0.1 --port 8765
+```
+
+2. Then start the desktop app:
+
+```bash
+cd desktop/electrobun
+bun install
+bun run start
 ```
 
 If you run the Electrobun app on Linux/WSL, install its tray/runtime dependency once:
@@ -185,19 +195,14 @@ If you run the Electrobun app on Linux/WSL, install its tray/runtime dependency 
 sudo apt install -y libayatana-appindicator3-1
 ```
 
-Then launch the desktop app from `desktop/electrobun/`:
-
-```bash
-cd desktop/electrobun
-bun install
-bun run start
-```
-
-Desktop notes:
+Desktop behavior:
 - the bridge is localhost-only and opt-in
 - the desktop app does not auto-start WSL services for you
-- only one recording session is supported at a time
-- default hotkey is `CommandOrControl+Alt+R`
+- the app stays locked while the bridge is warming the model
+- transcript history is in-memory for the current bridge session only
+- the app can clear the visible transcript history
+- default hotkey is `Ctrl` + `Alt` + `R`
+- under WSLg, the hotkey works best while the app window is focused; true system-wide shortcut capture is not fully reliable in this environment
 - override bridge URL or hotkey with `PARAKEET_BRIDGE_URL`, `PARAKEET_BRIDGE_COMMAND`, and `PARAKEET_HOTKEY`
 
 ## Benchmark

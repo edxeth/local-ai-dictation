@@ -25,4 +25,5 @@ Thumbs.db
 # Logs/Artifacts
 *.log
 transcriber.debug.log
+bun.lock
 
