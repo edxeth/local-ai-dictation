@@ -41,7 +41,10 @@ type DesktopRPC = {
   };
   webview: {
     requests: {};
-    messages: {};
+    messages: {
+      rendererBooted: { params: { href: string } };
+      rendererError: { params: { message: string } };
+    };
   };
 };
 
@@ -54,6 +57,14 @@ const rpc = Electroview.defineRPC<DesktopRPC>({
 });
 
 const electrobun = new Electrobun.Electroview({ rpc });
+
+window.addEventListener("error", (event) => {
+  try {
+    (electrobun.rpc as any)?.send?.rendererError({ message: event.message || "unknown renderer error" });
+  } catch {
+    // ignore transport bootstrap failures while reporting renderer errors
+  }
+});
 
 const statusBadge = document.getElementById("statusBadge") as HTMLDivElement;
 const hotkeyValue = document.getElementById("hotkeyValue") as HTMLDivElement;
@@ -163,5 +174,11 @@ refreshButton.addEventListener("click", () => {
 (electrobun.rpc as any)?.addMessageListener("bridgeError", (payload: { message: string }) => {
   errorBox.textContent = payload.message;
 });
+
+try {
+  (electrobun.rpc as any)?.send?.rendererBooted({ href: window.location.href });
+} catch {
+  // ignore if transport is not ready yet
+}
 
 void refreshState();

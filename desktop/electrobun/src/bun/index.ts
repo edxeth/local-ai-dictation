@@ -41,7 +41,10 @@ type DesktopRPC = {
   }>;
   webview: RPCSchema<{
     requests: {};
-    messages: {};
+    messages: {
+      rendererBooted: { params: { href: string } };
+      rendererError: { params: { message: string } };
+    };
   }>;
 };
 
@@ -137,7 +140,14 @@ const rpc = BrowserView.defineRPC<DesktopRPC>({
         return { success: true } as const;
       },
     },
-    messages: {},
+    messages: {
+      rendererBooted: ({ href }) => {
+        console.log(`Renderer booted: ${href}`);
+      },
+      rendererError: ({ message }) => {
+        console.error(`Renderer error: ${message}`);
+      },
+    },
   },
 });
 
@@ -159,6 +169,7 @@ async function toggleFromBackground() {
   }
 }
 
+console.log("Creating BrowserWindow...");
 mainWindow = new BrowserWindow({
   title: "Parakeet Desktop",
   url: "views://mainview/index.html",
@@ -170,8 +181,10 @@ mainWindow = new BrowserWindow({
   },
   rpc,
 });
+console.log("BrowserWindow created");
 
 tray = new Tray({ title: "Parakeet" });
+console.log("Tray created");
 tray.setMenu([
   { type: "normal", label: "Open Parakeet", action: "open" },
   { type: "normal", label: `Toggle Recording (${HOTKEY})`, action: "toggle" },
@@ -195,12 +208,14 @@ tray.on("tray-clicked", async (event: any) => {
   }
 });
 
+console.log("Registering global hotkey...");
 const registeredHotkey = GlobalShortcut.register(HOTKEY, () => {
   void toggleFromBackground();
 });
 if (!registeredHotkey) {
   console.warn(`Failed to register global hotkey: ${HOTKEY}`);
 }
+console.log(`GlobalShortcut register result: ${registeredHotkey}`);
 
 setInterval(() => {
   void broadcastBridgeState();
