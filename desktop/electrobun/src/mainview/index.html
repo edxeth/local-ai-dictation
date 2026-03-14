@@ -1,45 +1,53 @@
-<!doctype html>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Parakeet Desktop</title>
-<div class="app">
-  <header class="hero">
-    <div>
-      <h1>Parakeet Desktop</h1>
-      <p class="sub">Windows control surface for the WSL Parakeet bridge.</p>
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Parakeet Desktop</title>
+    <link rel="stylesheet" href="index.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="hero">
+        <div>
+          <h1>Parakeet Desktop</h1>
+          <p class="sub">Windows control surface for the WSL Parakeet bridge.</p>
+        </div>
+        <div id="statusBadge" class="badge offline">Disconnected</div>
+      </header>
+
+      <section class="card">
+        <div class="row spread">
+          <div>
+            <div class="label">Global hotkey</div>
+            <div id="hotkeyValue" class="value">—</div>
+          </div>
+          <button id="toggleButton" class="primary">Start recording</button>
+        </div>
+        <p id="statusLine" class="status-line">Waiting for bridge status…</p>
+      </section>
+
+      <section class="card">
+        <div class="label">Bridge URL</div>
+        <div id="bridgeUrl" class="mono">—</div>
+        <div class="label top-gap">Run this in WSL</div>
+        <pre id="bridgeCommand" class="command">—</pre>
+      </section>
+
+      <section class="card transcript-card">
+        <div class="row spread middle">
+          <div class="label">Latest transcript</div>
+          <button id="refreshButton" class="secondary">Refresh</button>
+        </div>
+        <div id="transcriptMeta" class="meta">No transcript yet.</div>
+        <pre id="transcriptText" class="transcript empty">No transcript yet.</pre>
+      </section>
+
+      <section class="card debug-card">
+        <div class="label">Bridge diagnostics</div>
+        <pre id="errorBox" class="error-box">No bridge errors.</pre>
+      </section>
     </div>
-    <div id="statusBadge" class="badge offline">Disconnected</div>
-  </header>
-
-  <section class="card">
-    <div class="row spread">
-      <div>
-        <div class="label">Global hotkey</div>
-        <div id="hotkeyValue" class="value">—</div>
-      </div>
-      <button id="toggleButton" class="primary">Start recording</button>
-    </div>
-    <p id="statusLine" class="status-line">Waiting for bridge status…</p>
-  </section>
-
-  <section class="card">
-    <div class="label">Bridge URL</div>
-    <div id="bridgeUrl" class="mono">—</div>
-    <div class="label top-gap">Run this in WSL</div>
-    <pre id="bridgeCommand" class="command">—</pre>
-  </section>
-
-  <section class="card transcript-card">
-    <div class="row spread middle">
-      <div class="label">Latest transcript</div>
-      <button id="refreshButton" class="secondary">Refresh</button>
-    </div>
-    <div id="transcriptMeta" class="meta">No transcript yet.</div>
-    <pre id="transcriptText" class="transcript empty">No transcript yet.</pre>
-  </section>
-
-  <section class="card debug-card">
-    <div class="label">Bridge diagnostics</div>
-    <pre id="errorBox" class="error-box">No bridge errors.</pre>
-  </section>
-</div>
+    <script type="module" src="index.ts"></script>
+  </body>
+</html>
