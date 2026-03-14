@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
+import json
 import sys
 from typing import Sequence
 
+from parakeet.audio import list_input_devices
 from parakeet.dictation import add_cli_arguments
 
 
@@ -23,6 +26,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_cli_arguments(dictation_parser)
     dictation_parser.set_defaults(handler=_run_dictation_namespace)
+
+    devices_parser = subparsers.add_parser(
+        "devices",
+        help="List available input devices.",
+        description="List available input devices.",
+    )
+    devices_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit machine-readable JSON.",
+    )
+    devices_parser.set_defaults(handler=_run_devices_namespace)
     return parser
 
 
@@ -30,6 +46,26 @@ def _run_dictation_namespace(namespace: argparse.Namespace) -> int:
     from parakeet.dictation import run_dictation
 
     return run_dictation(namespace)
+
+
+def _run_devices_namespace(namespace: argparse.Namespace) -> int:
+    devices = list_input_devices()
+    payload = {
+        "schema_version": 1,
+        "devices": [asdict(device) for device in devices],
+    }
+
+    if namespace.json_output:
+        print(json.dumps(payload))
+        return 0
+
+    print("Input devices:")
+    for device in devices:
+        default_marker = " default" if device.is_default_candidate else ""
+        print(
+            f"- id={device.id} name='{device.name}' rate={device.default_sample_rate}Hz host_api={device.host_api}{default_marker}"
+        )
+    return 0
 
 
 def run_dictation_argv(argv: Sequence[str] | None = None) -> int:

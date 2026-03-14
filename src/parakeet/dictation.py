@@ -19,6 +19,7 @@ import wave
 from contextlib import nullcontext
 from typing import Any
 
+from parakeet.audio import list_input_devices
 from parakeet.config import resolve_config
 from parakeet.errors import (
     AUDIO_BACKEND_UNREACHABLE,
@@ -30,7 +31,7 @@ from parakeet.errors import (
     ExitCode,
     ModelError,
 )
-from parakeet.types import AudioDevice, DictationConfig, TranscriptionEngine, TranscriptionResult
+from parakeet.types import DictationConfig, TranscriptionEngine, TranscriptionResult
 
 
 _shutdown_event = threading.Event()
@@ -289,35 +290,14 @@ def _load_runtime_dependencies(debug: bool):
     return nemo_asr, pyaudio, pyperclip, torch
 
 
-def _collect_input_devices(pyaudio_module: Any) -> list[AudioDevice]:
-    pa = pyaudio_module.PyAudio()
-    try:
-        devices: list[AudioDevice] = []
-        for idx in range(pa.get_device_count()):
-            info = pa.get_device_info_by_index(idx)
-            if int(info.get("maxInputChannels", 0)) <= 0:
-                continue
-            devices.append(
-                AudioDevice(
-                    id=idx,
-                    name=str(info.get("name", "unknown")),
-                    default_sample_rate=int(info.get("defaultSampleRate", 0)),
-                    max_input_channels=int(info.get("maxInputChannels", 0)),
-                    host_api="unknown",
-                )
-            )
-        return devices
-    finally:
-        pa.terminate()
-
-
 def list_devices(pyaudio_module: Any) -> int:
     try:
-        devices = _collect_input_devices(pyaudio_module)
+        devices = list_input_devices(pyaudio_module)
         print("Input devices:")
         for device in devices:
+            default_marker = " default" if device.is_default_candidate else ""
             print(
-                f"- id={device.id} name='{device.name}' rate={device.default_sample_rate}Hz"
+                f"- id={device.id} name='{device.name}' rate={device.default_sample_rate}Hz host_api={device.host_api}{default_marker}"
             )
         return int(ExitCode.OK)
     except Exception as exc:

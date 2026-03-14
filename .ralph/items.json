@@ -42,7 +42,7 @@
         "Confirm the JSON output contains `schema_version` and a `devices` array of stable device objects sorted by device id",
         "Run the zero-device scenario and confirm the command still returns a valid JSON object with `devices: []`"
       ],
-      "passes": false,
+      "passes": true,
       "regression_notes": ""
     },
     {
