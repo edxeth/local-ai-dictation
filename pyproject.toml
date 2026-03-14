@@ -21,8 +21,16 @@ dependencies = [
 [project.scripts]
 parakeet = "parakeet.cli:main"
 
+[project.optional-dependencies]
+test = [
+  "pytest>=8",
+]
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

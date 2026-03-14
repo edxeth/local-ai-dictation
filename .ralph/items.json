@@ -86,8 +86,8 @@
         "Confirm the JSON output contains `load_ms`, `run_ms`, aggregate timing fields, transcript fields, and arithmetic consistent with the source SPEC",
         "Run the expected-text path and confirm `normalized_match` is computed from the sidecar transcript contract"
       ],
-      "passes": true,
-      "regression_notes": ""
+      "passes": false,
+      "regression_notes": "Smoke verification on 2026-03-14 found NeMo info logs on stdout before the JSON payload, so the live `parakeet benchmark --json` command is not yet cleanly machine-readable end-to-end even though timing/arithmetic remain correct."
     },
     {
       "category": "verification",
@@ -97,7 +97,7 @@
         "Run the automated test suite in a way that does not require a live microphone or network download",
         "Confirm the tests provide deterministic pass or fail evidence for the command contracts defined in the source SPEC"
       ],
-      "passes": false,
+      "passes": true,
       "regression_notes": ""
     },
     {
