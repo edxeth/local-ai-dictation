@@ -1,4 +1,4 @@
-"""Model readiness helpers for Parakeet."""
+"""Model readiness and transcription helpers for Parakeet."""
 
 from __future__ import annotations
 
@@ -6,6 +6,9 @@ import importlib
 import os
 from pathlib import Path
 from typing import Any, Mapping
+
+from parakeet.errors import MODEL_IMPORT_FAILED, MODEL_TRANSCRIBE_FAILED, ModelError
+from parakeet.types import DictationConfig, TranscriptionEngine, TranscriptionResult
 
 
 MODEL_ID = "nvidia/parakeet-tdt-0.6b-v3"
@@ -80,6 +83,15 @@ def _check_import_readiness() -> tuple[bool, str | None]:
     return True, None
 
 
+def _load_runtime_dependencies() -> tuple[Any, Any]:
+    try:
+        nemo_asr = importlib.import_module("nemo.collections.asr")
+        torch_module = importlib.import_module("torch")
+    except Exception as exc:  # pragma: no cover - exercised via ModelError in tests/calls
+        raise ModelError(MODEL_IMPORT_FAILED, str(exc)) from exc
+    return nemo_asr, torch_module
+
+
 def check_model_cache(
     env: Mapping[str, str] | None = None,
     *,
@@ -107,3 +119,43 @@ def check_model_cache(
         "import_error": import_error,
         "detail": detail,
     }
+
+
+def load_engine(config: DictationConfig) -> TranscriptionEngine:
+    nemo_asr, torch_module = _load_runtime_dependencies()
+
+    try:
+        engine = nemo_asr.models.ASRModel.from_pretrained(MODEL_ID)
+    except Exception as exc:
+        raise ModelError(MODEL_IMPORT_FAILED, str(exc)) from exc
+
+    device = "cpu" if config.cpu or not torch_module.cuda.is_available() else "cuda"
+    engine.to(device)
+    engine.eval()
+    setattr(engine, "_parakeet_device", device)
+    return engine
+
+
+def warmup(engine: TranscriptionEngine) -> None:
+    engine.eval()
+
+
+def transcribe_wav(engine: TranscriptionEngine, path: str | Path) -> TranscriptionResult:
+    _, torch_module = _load_runtime_dependencies()
+
+    try:
+        with torch_module.inference_mode():
+            result = engine.transcribe([str(path)], verbose=False)
+    except Exception as exc:
+        raise ModelError(MODEL_TRANSCRIBE_FAILED, str(exc)) from exc
+
+    if isinstance(result, list) and result:
+        first = result[0]
+        transcript_text = getattr(first, "text", first if isinstance(first, str) else str(first))
+    else:
+        transcript_text = str(result)
+
+    return TranscriptionResult(
+        text=transcript_text,
+        device=getattr(engine, "_parakeet_device", None),
+    )

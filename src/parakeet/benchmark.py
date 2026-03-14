@@ -1,8 +1,19 @@
-"""Benchmark helpers for deterministic transcript normalization and fixture sidecars."""
+"""Fixture-based benchmark helpers and CLI support for Parakeet."""
 
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
+import math
 from pathlib import Path
+import statistics
+import sys
+import time
+import wave
+
+from parakeet.errors import AppError, ExitCode, MODEL_TRANSCRIBE_FAILED
+from parakeet.model import load_engine, transcribe_wav
+from parakeet.types import BenchmarkReport, DictationConfig
 import unicodedata
 
 
@@ -47,3 +58,131 @@ def load_normalized_expected_transcript(
 def normalized_exact_match(actual: str, expected: str) -> bool:
     """Compare two transcripts using the deterministic normalization contract."""
     return normalize_transcript(actual) == normalize_transcript(expected)
+
+
+def _validate_fixture_path(fixture_path: str | Path) -> Path:
+    candidate = Path(fixture_path)
+    candidate_text = str(fixture_path)
+
+    if "://" in candidate_text:
+        raise ValueError(f"Fixture path must be local: {fixture_path}")
+    if candidate.suffix.lower() != ".wav":
+        raise ValueError(f"Fixture must be a WAV file: {fixture_path}")
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Fixture file not found: {fixture_path}")
+
+    try:
+        with wave.open(str(candidate), "rb") as wav_file:
+            wav_file.getnchannels()
+            wav_file.getframerate()
+            wav_file.getnframes()
+    except wave.Error as exc:
+        raise ValueError(f"Fixture is not a readable WAV file: {fixture_path}") from exc
+
+    return candidate
+
+
+def _p95(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = max(0, math.ceil(len(ordered) * 0.95) - 1)
+    return ordered[index]
+
+
+def benchmark_fixture(
+    fixture_path: str | Path,
+    *,
+    runs: int,
+    cpu: bool = False,
+    check_expected: bool = False,
+    perf_counter=time.perf_counter,
+    load_engine_fn=None,
+    transcribe_wav_fn=None,
+) -> BenchmarkReport:
+    if runs <= 0:
+        raise ValueError("Benchmark runs must be a positive integer")
+
+    fixture = _validate_fixture_path(fixture_path)
+    expected_text = load_expected_transcript(fixture, required=check_expected)
+
+    if load_engine_fn is None:
+        load_engine_fn = load_engine
+    if transcribe_wav_fn is None:
+        transcribe_wav_fn = transcribe_wav
+
+    load_start = perf_counter()
+    engine = load_engine_fn(DictationConfig(cpu=cpu))
+    load_ms = (perf_counter() - load_start) * 1000.0
+
+    run_ms: list[float] = []
+    final_result = None
+    for _ in range(runs):
+        run_start = perf_counter()
+        final_result = transcribe_wav_fn(engine, fixture)
+        run_ms.append((perf_counter() - run_start) * 1000.0)
+
+    if final_result is None:
+        raise AppError(MODEL_TRANSCRIBE_FAILED, "Benchmark did not produce a transcription result")
+
+    transcript = final_result.text
+    normalized_transcript = normalize_transcript(transcript)
+    normalized_match = (
+        normalized_exact_match(transcript, expected_text) if expected_text is not None else None
+    )
+    total_ms = load_ms + sum(run_ms)
+
+    device = final_result.device or getattr(engine, "_parakeet_device", None) or ("cpu" if cpu else "cuda")
+
+    return BenchmarkReport(
+        fixture=str(fixture_path),
+        runs=runs,
+        device=device,
+        load_ms=load_ms,
+        run_ms=run_ms,
+        mean_transcribe_ms=statistics.mean(run_ms),
+        median_transcribe_ms=statistics.median(run_ms),
+        p95_transcribe_ms=_p95(run_ms),
+        total_ms=total_ms,
+        transcript=transcript,
+        normalized_transcript=normalized_transcript,
+        expected_text=expected_text,
+        normalized_match=normalized_match,
+    )
+
+
+def run_benchmark_command(
+    fixture_path: str,
+    *,
+    runs: int,
+    cpu: bool = False,
+    json_output: bool = False,
+    check_expected: bool = False,
+) -> int:
+    try:
+        report = benchmark_fixture(
+            fixture_path,
+            runs=runs,
+            cpu=cpu,
+            check_expected=check_expected,
+        )
+    except (AppError, FileNotFoundError, ValueError) as exc:
+        print(f"Benchmark error: {exc}", file=sys.stderr)
+        return int(ExitCode.ERROR)
+
+    if json_output:
+        print(json.dumps(asdict(report)))
+    else:
+        print(f"fixture: {report.fixture}")
+        print(f"runs: {report.runs}")
+        print(f"device: {report.device}")
+        print(f"load_ms: {report.load_ms:.3f}")
+        print(f"mean_transcribe_ms: {report.mean_transcribe_ms:.3f}")
+        print(f"median_transcribe_ms: {report.median_transcribe_ms:.3f}")
+        print(f"p95_transcribe_ms: {report.p95_transcribe_ms:.3f}")
+        print(f"total_ms: {report.total_ms:.3f}")
+        print(f"transcript: {report.transcript}")
+        if report.expected_text is not None:
+            print(f"normalized_match: {report.normalized_match}")
+
+    return int(ExitCode.OK)

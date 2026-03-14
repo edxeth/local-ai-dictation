@@ -86,7 +86,7 @@
         "Confirm the JSON output contains `load_ms`, `run_ms`, aggregate timing fields, transcript fields, and arithmetic consistent with the source SPEC",
         "Run the expected-text path and confirm `normalized_match` is computed from the sidecar transcript contract"
       ],
-      "passes": false,
+      "passes": true,
       "regression_notes": ""
     },
     {

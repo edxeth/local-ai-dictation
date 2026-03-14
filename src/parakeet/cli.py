@@ -9,6 +9,7 @@ import sys
 from typing import Sequence
 
 from parakeet.audio import list_input_devices
+from parakeet.benchmark import run_benchmark_command
 from parakeet.dictation import add_cli_arguments
 from parakeet.doctor import collect_doctor_report, doctor_exit_code, render_doctor_text
 
@@ -58,6 +59,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Check local Parakeet cache/import readiness without loading or downloading the model.",
     )
     doctor_parser.set_defaults(handler=_run_doctor_namespace)
+
+    benchmark_parser = subparsers.add_parser(
+        "benchmark",
+        help="Benchmark prerecorded WAV fixtures deterministically.",
+        description="Benchmark prerecorded WAV fixtures deterministically.",
+    )
+    benchmark_parser.add_argument(
+        "--fixture",
+        required=True,
+        help="Local WAV fixture path.",
+    )
+    benchmark_parser.add_argument(
+        "--runs",
+        type=int,
+        default=5,
+        help="Number of warm transcription runs to execute.",
+    )
+    benchmark_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit machine-readable JSON.",
+    )
+    benchmark_parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Force CPU inference.",
+    )
+    benchmark_parser.add_argument(
+        "--check-expected",
+        action="store_true",
+        help="Require and compare the expected transcript sidecar.",
+    )
+    benchmark_parser.set_defaults(handler=_run_benchmark_namespace)
     return parser
 
 
@@ -87,7 +122,6 @@ def _run_devices_namespace(namespace: argparse.Namespace) -> int:
     return 0
 
 
-
 def _run_doctor_namespace(namespace: argparse.Namespace) -> int:
     report = collect_doctor_report(check_model_cache=bool(namespace.check_model_cache))
 
@@ -97,6 +131,16 @@ def _run_doctor_namespace(namespace: argparse.Namespace) -> int:
         print(render_doctor_text(report))
 
     return doctor_exit_code(report)
+
+
+def _run_benchmark_namespace(namespace: argparse.Namespace) -> int:
+    return run_benchmark_command(
+        namespace.fixture,
+        runs=namespace.runs,
+        cpu=bool(namespace.cpu),
+        json_output=bool(namespace.json_output),
+        check_expected=bool(namespace.check_expected),
+    )
 
 
 def run_dictation_argv(argv: Sequence[str] | None = None) -> int:
