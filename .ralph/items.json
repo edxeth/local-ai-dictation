@@ -130,7 +130,7 @@
         "Confirm the documented commands match the actual packaged command surface implemented in the codebase",
         "Verify the migration notes explain the continued role of `transcriber.py` if the compatibility wrapper still exists"
       ],
-      "passes": false,
+      "passes": true,
       "regression_notes": ""
     }
   ]

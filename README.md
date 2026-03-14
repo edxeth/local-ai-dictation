@@ -1,136 +1,258 @@
-# Parakeet Dictation (GPU/CPU)
+# Parakeet Dictation
 
-GPU‑accelerated or CPU‑only microphone transcription using NVIDIA NeMo Parakeet TDT 0.6B v3, with a clean CLI and a debug mode for device/timing diagnostics.
+Packaged microphone dictation for Linux/WSL2 using NVIDIA NeMo Parakeet TDT 0.6B v3.
 
-## Features
+Milestone 1 ships a packaged `parakeet` CLI with:
+- interactive `parakeet dictation`
+- machine-readable `parakeet devices --json`
+- deterministic `parakeet doctor --json`
+- fixture-based `parakeet benchmark --json`
+- optional WebRTC-VAD auto-stop
+- a temporary `transcriber.py` compatibility wrapper
 
-- GPU/CPU switch via `--cpu`, with explicit device placement and verification using PyTorch device checks.
-- `--debug` prints device, timings, and CUDA memory stats and truncates `transcriber.debug.log` on each run to keep logs fresh.
-- `--list-devices` enumerates input devices and `--input-device` selects one for recording.
-- Copies transcript to clipboard (disable with `--no-clipboard`).
+## Supported platforms
 
-## Requirements
+- Linux: supported
+- WSL2 Ubuntu: supported
+- Windows native: not supported
+- macOS: not supported
 
-- Python 3.10+
-- PortAudio for microphone access (PyAudio wheels bind to it)
-- For GPU: a CUDA-enabled PyTorch build and compatible NVIDIA drivers
-- NVIDIA NeMo Toolkit (ASR) and its runtime dependencies
+The lifecycle remains user-controlled:
+- no microphone access before explicit start
+- no automatic background startup
+- manual start/stop always remains available
 
-## OS Support
+## System prerequisites
 
-- Linux (Ubuntu/Debian) and WSL2 Ubuntu: supported; this is the primary/validated target.
-- Windows (native): not supported currently. The CLI uses `select` on `stdin` and NeMo does not provide Windows wheels; use WSL2 Ubuntu instead.
-- macOS: not supported currently. NeMo does not publish macOS wheels; consider running inside a Linux VM/container, or use an alternative engine (e.g., Faster‑Whisper) if native macOS support is required.
+On Debian/Ubuntu (including WSL2), install audio dependencies first:
 
-## Linux / WSL2 prerequisites
-
-On Debian/Ubuntu (including WSL2), install system audio dependencies first:
-```
+```bash
 sudo apt update
 sudo apt install -y portaudio19-dev pulseaudio libasound2-plugins
 ```
 
-Clipboard helpers (optional, for `pyperclip`):
-```
-sudo apt install -y xclip   # X11
+Optional clipboard helpers:
+
+```bash
+sudo apt install -y xclip
 # or
-sudo apt install -y wl-clipboard  # Wayland
+sudo apt install -y wl-clipboard
 ```
 
-Notes for WSL2/WSLg: audio is bridged via the PulseAudio server at `unix:/mnt/wslg/PulseServer`, so starting a separate PulseAudio daemon is not needed and is typically refused. RDP sink/source devices may show as suspended until audio flows; that's expected under the WSLg bridge.
+Notes for WSL2/WSLg:
+- WSLg usually exposes PulseAudio at `unix:/mnt/wslg/PulseServer`
+- you typically should not start a second PulseAudio daemon inside WSL
 
-## Install (uv or pip)
+## Install from a fresh checkout
 
 Create and activate a virtual environment:
-```
-uv venv
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 ```
 
-Install PyTorch first (choose one):
-```
+Install PyTorch first:
+
+```bash
 # GPU (CUDA 12.1)
-uv pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu121
+python -m pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu121
 
-# CPU-only
-uv pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
+# or CPU-only
+python -m pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
 ```
 
-Then install the rest from PyPI:
-```
-uv pip install 'nemo_toolkit[asr]' pyaudio 'numpy<2.0' pyperclip
-```
+Then install this project in editable mode:
 
-Why two steps? The PyTorch wheels are hosted on a separate index; installing them first avoids accidentally directing all packages to the PyTorch index (which would fail for NeMo and others).
-
-## Optional ALSA → Pulse config (Linux)
-
-Direct ALSA to PulseAudio by placing this in `~/.asoundrc` if needed:
-```
-pcm.!default {
-    type pulse
-}
-ctl.!default {
-    type pulse
-}
+```bash
+python -m pip install -e .
 ```
 
-## Usage
+Optional test/build tools:
 
-Make the script executable and run:
-```
-chmod +x transcriber.py
-python transcriber.py
+```bash
+python -m pip install -e .[test] build
 ```
 
-Helpful options:
-```
-# Verbose diagnostics to file (device, timings, GPU memory), spinner preserved
-python transcriber.py --debug
+## CLI overview
 
-# Force CPU even if CUDA is available
-python transcriber.py --cpu
+With the virtualenv active, the packaged entry point is:
 
-# List and select audio input devices
-python transcriber.py --list-devices
-python transcriber.py --input-device 2
-
-# Disable clipboard copy (avoid needing xclip/wl-clipboard)
-python transcriber.py --no-clipboard
+```bash
+parakeet --help
 ```
 
-Help-first CLI prints instructions and exits without loading the model:
+Subcommands:
+- `parakeet dictation`
+- `parakeet devices`
+- `parakeet doctor`
+- `parakeet benchmark`
+
+## Dictation
+
+Run `parakeet dictation` to start one interactive dictation session.
+
+Verified command surfaces:
+
+```bash
+parakeet dictation --help
 ```
-python transcriber.py -h
+
+Common invocation patterns:
+
+```bash
+parakeet dictation --cpu
+parakeet dictation --input-device 2
+parakeet dictation --vad
+parakeet dictation --vad --max-silence-ms 1200 --min-speech-ms 300 --vad-mode 2
+parakeet dictation --format json --output-file transcript.json --no-clipboard
+parakeet dictation --debug
 ```
 
-## Verify GPU usage
+Behavior notes:
+- default flow is manual: press `Enter` to start, then `Enter` to stop
+- with `--vad`, `Enter` still starts recording and manual stop is still available
+- VAD auto-stop only becomes eligible after voiced audio is detected
+- if no speech is detected, recording remains manual-stop only
+- `--format json` prints exactly one JSON object to stdout for the transcript result
+- `--output-file` mirrors the rendered transcript output to disk
+- clipboard failures are warnings, not fatal errors
 
-In `--debug`, the script prints `Model device: cuda:N` when on GPU and shows CUDA memory growth during inference.
-If `--cpu` is used or only CPU wheels are installed, the device prints as `cpu` and CUDA memory remains zero.
+Legacy migration path still works:
 
-## Model cache
+```bash
+python transcriber.py --help
+```
 
-Parakeet is downloaded once and cached under the Hugging Face Hub cache (default `~/.cache/huggingface/hub`), and subsequent runs load it locally.
-This location can be customized via `HF_HOME` / `HF_HUB_CACHE` if desired.
+Run `python transcriber.py` if you still need the legacy entry path. It is currently a thin compatibility wrapper that forwards into `parakeet dictation`.
 
-## Notes
+## Devices
 
-- The script truncates `transcriber.debug.log` on each `--debug` run to keep logs fresh.
-- The spinner writes directly to the original terminal stream to avoid interference from redirected stdout/stderr during model/model‑load.
-- Argparse parsing occurs before heavy imports so `-h/--help` returns immediately.
+List input devices in machine-readable form:
+
+```bash
+parakeet devices --json
+```
+
+Contract notes:
+- output includes `schema_version`
+- `devices` is always an array
+- zero-device cases return `devices: []`
+- device ordering is stable by device id
+
+## Doctor
+
+Run fast readiness diagnostics without loading or downloading the model:
+
+```bash
+parakeet doctor --json
+```
+
+Opt in to local model cache/import checks:
+
+```bash
+parakeet doctor --check-model-cache --json
+```
+
+`doctor` reports:
+- WSL detection
+- Pulse/WSLg readiness
+- audio-device enumeration
+- clipboard availability
+- CUDA readiness
+- local model cache/import readiness when requested
+
+Exit codes:
+- `0`: ready
+- `2`: recording blocked
+- `3`: degraded but usable
+
+## Benchmark
+
+Benchmark deterministic prerecorded WAV fixtures only:
+
+```bash
+parakeet benchmark --fixture tests/fixtures/short_16k.wav --runs 2 --json
+```
+
+Require an expected transcript sidecar and compute normalized exact match:
+
+```bash
+parakeet benchmark --fixture tests/fixtures/short_16k.wav --runs 2 --json --check-expected
+```
+
+Benchmark rules:
+- uses local WAV fixtures only
+- never accesses the microphone
+- loads the engine once per invocation
+- reports `load_ms`, `run_ms`, aggregate timing fields, transcript fields, and normalized match state
+- expected sidecars use `tests/fixtures/name.expected.txt`
+
+## Configuration
+
+Config file location:
+
+```text
+~/.config/parakeet-dictation/config.toml
+```
+
+Precedence:
+1. CLI flags
+2. environment variables
+3. config file
+4. built-in defaults
+
+Supported environment variables:
+- `PARAKEET_CPU`
+- `PARAKEET_INPUT_DEVICE`
+- `PARAKEET_VAD`
+- `PARAKEET_MAX_SILENCE_MS`
+- `PARAKEET_MIN_SPEECH_MS`
+- `PARAKEET_VAD_MODE`
+- `PARAKEET_FORMAT`
+- `PARAKEET_OUTPUT_FILE`
+- `PARAKEET_CLIPBOARD`
+- `PARAKEET_DEBUG`
+
+Example config:
+
+```toml
+cpu = false
+input_device = ""
+vad = false
+max_silence_ms = 1200
+min_speech_ms = 300
+vad_mode = 2
+format = "text"
+output_file = ""
+clipboard = true
+debug = false
+```
+
+## Verification from this repo
+
+With the virtualenv active:
+
+```bash
+python -m compileall transcriber.py src tests
+python -m pytest -q
+python -m pip install -e .
+python -m build
+parakeet devices --json
+parakeet doctor --json
+parakeet doctor --check-model-cache --json
+parakeet benchmark --fixture tests/fixtures/short_16k.wav --runs 2 --json --check-expected
+```
 
 ## Troubleshooting
 
-- PyAudio error about sample rate: some devices only support 48kHz. Try selecting a device via `--input-device` (see `--list-devices`) or switch your default input device/sample rate in system settings.
-- Clipboard copy fails on Linux: install `xclip` (X11) or `wl-clipboard` (Wayland), or run with `--no-clipboard`.
-- GPU memory stays at 0 in `--debug`: you are likely running the CPU PyTorch build or `--cpu` is set. Reinstall a CUDA build of PyTorch and omit `--cpu`.
-
-## Windows/macOS status
-
-- Windows native: not supported (NeMo wheels and the `select`-based key handling are Linux‑only). Use WSL2 Ubuntu and follow the Linux instructions.
-- macOS: not supported (no official NeMo/macOS wheels). Use a Linux VM/container or an alternative engine.
+- No input devices: run `parakeet devices --json` and `parakeet doctor --json`
+- Pulse/WSLg problems on WSL: check `PULSE_SERVER`, WSLg socket availability, and `pactl info`
+- Clipboard copy unavailable: install `xclip` or `wl-clipboard`, or use `--no-clipboard`
+- GPU not used: install a CUDA-enabled PyTorch build or run explicitly with `--cpu`
+- Missing offline model cache: run `parakeet doctor --check-model-cache --json`
 
 ## License
 
-MIT for this glue code; refer to upstream projects (NeMo, PyAudio, PyTorch) for their licenses.
+MIT for this project glue code. Refer to upstream dependencies such as NeMo, PyTorch, and PyAudio for their licenses.
