@@ -197,8 +197,9 @@ function renderState(viewState: BridgeViewState) {
 
   const errorLines = [];
   if (viewState.session.last_error) errorLines.push(viewState.session.last_error);
-  if (viewState.session.stderr_tail.length) errorLines.push(...viewState.session.stderr_tail.slice(-8));
+  if (viewState.session.stderr_tail.length) errorLines.push(...viewState.session.stderr_tail.slice(-20));
   errorBox.textContent = errorLines.length ? errorLines.join("\n") : "No bridge errors.";
+  errorBox.scrollTop = errorBox.scrollHeight;
 }
 
 async function refreshState() {

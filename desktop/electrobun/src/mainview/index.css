@@ -259,6 +259,40 @@ button.primary {
   color: white;
 }
 
+.control-row {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.control-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#toggleButton {
+  flex: 0 0 auto;
+  min-width: 138px;
+  min-height: 52px;
+  align-self: flex-start;
+}
+
+#statusLine {
+  max-width: 100%;
+}
+
+#historyList {
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#errorBox {
+  display: block;
+  max-height: 180px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 button.secondary {
   background: rgba(142, 156, 255, 0.15);
   color: #eef2ff;

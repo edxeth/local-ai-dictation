@@ -6,6 +6,7 @@ from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import signal
+import sys
 import threading
 import time
 from typing import Any, Callable
@@ -114,16 +115,20 @@ class DictationBridgeController:
         self._diagnostic_stream = _DiagnosticStream(self)
 
     def _append_diagnostic(self, text: str) -> None:
+        should_echo = False
         with self._lock:
             if not text:
                 return
             if self._stderr_tail and self._stderr_tail[-1] == text:
                 return
             self._stderr_tail.append(text)
+            should_echo = True
             if len(self._stderr_tail) > self._stderr_tail_limit:
                 self._stderr_tail = self._stderr_tail[-self._stderr_tail_limit :]
             if text == "🎤 Recording..." and self._state == "starting":
                 self._state = "recording"
+        if should_echo:
+            print(text, file=sys.stdout, flush=True)
 
     def _config(self) -> DictationConfig:
         return DictationConfig(
