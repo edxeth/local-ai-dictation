@@ -138,6 +138,7 @@ const rpc = BrowserView.defineRPC<DesktopRPC>({
         return await readBridgeState();
       },
       showWindow: async () => {
+        ensureMainWindowSize();
         mainWindow?.show();
         mainWindow?.focus();
         return { success: true } as const;
@@ -147,6 +148,9 @@ const rpc = BrowserView.defineRPC<DesktopRPC>({
   },
 });
 
+const MIN_WINDOW_WIDTH = 500;
+const MIN_WINDOW_HEIGHT = 1080;
+
 async function toggleFromBackground() {
   try {
     await fetchBridgeJson("/session/toggle", { method: "POST", body: "{}" });
@@ -155,18 +159,27 @@ async function toggleFromBackground() {
   }
 }
 
+function ensureMainWindowSize() {
+  if (!mainWindow) return;
+  const { width, height } = mainWindow.getSize();
+  if (width < MIN_WINDOW_WIDTH || height < MIN_WINDOW_HEIGHT) {
+    mainWindow.setSize(Math.max(width, MIN_WINDOW_WIDTH), Math.max(height, MIN_WINDOW_HEIGHT));
+  }
+}
+
 console.log("Creating BrowserWindow...");
 mainWindow = new BrowserWindow({
   title: "Parakeet Desktop",
   url: "views://mainview/index.html",
   frame: {
-    width: 420,
-    height: 500,
+    width: MIN_WINDOW_WIDTH,
+    height: MIN_WINDOW_HEIGHT,
     x: 220,
     y: 120,
   },
   rpc,
 });
+ensureMainWindowSize();
 console.log("BrowserWindow created");
 
 tray = new Tray({ title: "Parakeet" });
@@ -187,6 +200,7 @@ tray.on("tray-clicked", async (event: any) => {
   const action = event.data?.action;
   switch (action) {
     case "open":
+      ensureMainWindowSize();
       mainWindow?.show();
       mainWindow?.focus();
       break;

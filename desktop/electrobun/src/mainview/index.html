@@ -14,6 +14,7 @@
         <div id="busyMessage" class="busy-message">Please wait.</div>
       </div>
     </div>
+
     <div id="confirmOverlay" class="modal-overlay hidden" aria-hidden="true">
       <div class="modal-card">
         <div id="confirmTitle" class="modal-title">Clear history?</div>
@@ -24,16 +25,27 @@
         </div>
       </div>
     </div>
+
     <div class="app" id="appShell">
-      <header class="hero">
-        <div>
-          <h1>Parakeet Desktop</h1>
-          <p class="sub">Windows control surface for the WSL Parakeet bridge.</p>
+      <header class="card hero hero-card">
+        <div class="hero-copy">
+          <div class="eyebrow">Parakeet // Desk Relay</div>
+          <h1>Transcript deck</h1>
+          <p class="sub">A polished Windows control surface for the WSL bridge, tuned for quick capture and clean review.</p>
         </div>
-        <div id="statusBadge" class="badge offline">Disconnected</div>
+        <div class="hero-status">
+          <div class="label">Bridge state</div>
+          <div id="statusBadge" class="badge offline">Disconnected</div>
+        </div>
       </header>
 
-      <section class="card">
+      <section class="card control-card">
+        <div class="section-head">
+          <div>
+            <div class="label">Capture</div>
+            <div class="section-title">Session controls</div>
+          </div>
+        </div>
         <div id="controlRow" class="row spread control-row">
           <div id="controlInfo" class="control-info">
             <div class="label">Global hotkey</div>
@@ -45,20 +57,30 @@
       </section>
 
       <section class="card transcript-card">
-        <div class="row spread middle">
-          <div class="label">Transcription history</div>
+        <div class="section-head">
+          <div>
+            <div class="label">Logbook</div>
+            <div class="section-title">Transcription history</div>
+          </div>
           <button id="clearHistoryButton" class="secondary">Clear history</button>
         </div>
-        <div id="historyMeta" class="meta">No transcripts yet.</div>
+        <div id="historyMeta" class="meta">Logbook empty</div>
         <div id="historyList" class="history-list">
-          <div class="history-empty">No transcripts yet.</div>
+          <div class="history-empty">
+            <div class="history-empty-kicker">Awaiting first pass</div>
+            <div class="history-empty-title">No transcripts yet</div>
+            <div class="history-empty-copy">Start a recording and completed transcripts will land here for quick copy and review.</div>
+          </div>
         </div>
         <button id="showMoreButton" class="secondary history-more hidden">Show 10 more</button>
       </section>
 
       <details class="card collapsible-card" id="bridgeSection">
         <summary class="collapsible-summary">
-          <span class="label">Bridge connection</span>
+          <div>
+            <span class="label">Bridge</span>
+            <div class="section-title section-title-small">Connection details</div>
+          </div>
           <span class="summary-hint">Show details</span>
         </summary>
         <div class="label top-gap">Bridge URL</div>
@@ -69,7 +91,10 @@
 
       <details class="card collapsible-card debug-card" id="diagnosticsSection">
         <summary class="collapsible-summary">
-          <span class="label">Bridge diagnostics</span>
+          <div>
+            <span class="label">Diagnostics</span>
+            <div class="section-title section-title-small">Bridge logs</div>
+          </div>
           <span class="summary-hint">Show logs</span>
         </summary>
         <pre id="errorBox" class="error-box">No bridge errors.</pre>

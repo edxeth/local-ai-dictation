@@ -92,10 +92,16 @@ window.addEventListener("error", (event) => {
 let currentState: BridgeViewState | null = null;
 let visibleHistoryCount = 10;
 let historyClearedAfter: number | null = null;
+const copiedHistoryIds = new Set<string>();
+const copiedHistoryTimers = new Map<string, number>();
 
 function formatTimestamp(timestamp: number | null): string {
   if (!timestamp) return "—";
-  return new Date(timestamp * 1000).toLocaleTimeString();
+  return new Date(timestamp * 1000).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function renderHotkey(accelerator: string): string {
@@ -111,8 +117,47 @@ function renderHotkey(accelerator: string): string {
   };
   const parts = accelerator.split("+").map((part) => part.trim()).filter(Boolean);
   return `<span class="hotkey-display">${parts
-    .map((part) => `<span class="hotkey-key">${keyMap[part] || part}</span>`)
+    .map((part) => `<span class="hotkey-key">${escapeHtml(keyMap[part] || part)}</span>`)
     .join("")}</span>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderHistoryActionIcon(copied: boolean): string {
+  if (copied) {
+    return `
+      <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <path d="M16.4 5.4a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0L4.6 10.4A1 1 0 1 1 6 9l2.7 2.7 6.3-6.3a1 1 0 0 1 1.4 0Z" fill="currentColor"></path>
+      </svg>
+    `;
+  }
+
+  return `
+    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M7 3.5A2.5 2.5 0 0 1 9.5 1h5A2.5 2.5 0 0 1 17 3.5v7A2.5 2.5 0 0 1 14.5 13h-5A2.5 2.5 0 0 1 7 10.5v-7Zm2.5-.5a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .5.5h5a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.5-.5h-5Z" fill="currentColor"></path>
+      <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H6v2H5.5a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5V14h2v.5A2.5 2.5 0 0 1 11.5 17h-6A2.5 2.5 0 0 1 3 14.5v-8Z" fill="currentColor"></path>
+    </svg>
+  `;
+}
+
+function applyHistoryCopyButtonState(button: HTMLButtonElement, copied: boolean) {
+  button.classList.toggle("is-copied", copied);
+  button.setAttribute("aria-label", copied ? "Copied" : "Copy transcript");
+  button.setAttribute("title", copied ? "Copied" : "Copy transcript");
+  button.innerHTML = renderHistoryActionIcon(copied);
+}
+
+function syncViewportDensity() {
+  const viewportHeight = window.innerHeight;
+  appShell.classList.toggle("compact-window", viewportHeight <= 880);
+  appShell.classList.toggle("tight-window", viewportHeight <= 760);
 }
 
 function setBusy(busy: boolean) {
@@ -154,56 +199,99 @@ function confirmAction(title: string, message: string): Promise<boolean> {
   });
 }
 
-async function copyTranscript(text: string) {
+async function copyTranscript(itemId: string, text: string, button: HTMLButtonElement) {
   try {
     await navigator.clipboard.writeText(text);
+    copiedHistoryIds.add(itemId);
+    applyHistoryCopyButtonState(button, true);
+
+    const existingTimer = copiedHistoryTimers.get(itemId);
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+    }
+
+    const timer = window.setTimeout(() => {
+      copiedHistoryIds.delete(itemId);
+      copiedHistoryTimers.delete(itemId);
+      if (button.isConnected) {
+        applyHistoryCopyButtonState(button, false);
+      }
+    }, 1000);
+
+    copiedHistoryTimers.set(itemId, timer);
   } catch (error) {
     errorBox.textContent = error instanceof Error ? error.message : String(error);
   }
 }
 
+function getFilteredHistory(viewState: BridgeViewState | null): TranscriptHistoryItem[] {
+  if (!viewState) return [];
+  return (viewState.session.history || []).filter((item) => {
+    return historyClearedAfter === null || item.completed_at > historyClearedAfter;
+  });
+}
+
+function renderEmptyHistory() {
+  historyMeta.textContent = "Logbook empty";
+  historyList.innerHTML = `
+    <div class="history-empty">
+      <div class="history-empty-kicker">Awaiting first pass</div>
+      <div class="history-empty-title">No transcripts yet</div>
+      <div class="history-empty-copy">Start a recording and completed transcripts will land here for quick copy and review.</div>
+    </div>
+  `;
+  showMoreButton.classList.add("hidden");
+}
+
 function renderHistory(items: TranscriptHistoryItem[]) {
   if (!items.length) {
-    historyMeta.textContent = "No transcripts yet.";
-    historyList.innerHTML = `<div class="history-empty">No transcripts yet.</div>`;
-    showMoreButton.classList.add("hidden");
+    renderEmptyHistory();
     return;
   }
 
   const total = items.length;
   const visibleItems = items.slice().reverse().slice(0, visibleHistoryCount);
-  historyMeta.textContent = `${total} transcript${total === 1 ? "" : "s"}`;
+  historyMeta.textContent = `${total} entr${total === 1 ? "y" : "ies"} in the logbook`;
   historyList.innerHTML = visibleItems
     .map((item) => {
       const payload = item.payload;
       const cancelled = Boolean(payload.metadata?.cancelled_before_recording);
-      const body = payload.transcript || (cancelled ? "Cancelled before recording started." : "");
+      const transcript = payload.transcript?.trim() || "";
+      const body = transcript || (cancelled ? "Cancelled before recording started." : "No transcript text was returned.");
+      const device = payload.device ? ` · ${escapeHtml(String(payload.device))}` : "";
+      const isCopied = copiedHistoryIds.has(item.id);
+      const copyAction = transcript
+        ? `<button class="history-copy secondary ${isCopied ? "is-copied" : ""}" data-id="${escapeHtml(item.id)}" data-copy="${encodeURIComponent(transcript)}" aria-label="${isCopied ? "Copied" : "Copy transcript"}" title="${isCopied ? "Copied" : "Copy transcript"}">${renderHistoryActionIcon(isCopied)}</button>`
+        : "";
       return `
-        <div class="history-item">
+        <article class="history-item ${cancelled ? "cancelled" : ""}">
           <div class="history-header">
-            <div class="history-time">${formatTimestamp(item.completed_at)}${payload.device ? ` • ${payload.device}` : ""}</div>
-            <div class="history-actions">
-              <button class="history-copy" data-copy="${encodeURIComponent(payload.transcript || "")}">Copy</button>
-            </div>
+            <div class="history-time">${escapeHtml(formatTimestamp(item.completed_at))}${device}</div>
+            <div class="history-actions">${copyAction}</div>
           </div>
-          <div class="history-body">${body || "<empty transcript>"}</div>
-        </div>
+          <div class="history-body ${transcript ? "" : "muted"}">${escapeHtml(body)}</div>
+        </article>
       `;
     })
     .join("");
 
   showMoreButton.classList.toggle("hidden", visibleHistoryCount >= total);
   historyList.querySelectorAll<HTMLButtonElement>(".history-copy").forEach((button) => {
+    applyHistoryCopyButtonState(button, copiedHistoryIds.has(button.dataset.id || ""));
     button.addEventListener("click", () => {
-      void copyTranscript(decodeURIComponent(button.dataset.copy || ""));
+      const itemId = button.dataset.id || "";
+      void copyTranscript(itemId, decodeURIComponent(button.dataset.copy || ""), button);
     });
   });
 }
 
 function renderState(viewState: BridgeViewState) {
-  if (currentState && viewState.session.history.length > currentState.session.history.length) {
+  const nextFilteredHistory = getFilteredHistory(viewState);
+  const previousFilteredCount = getFilteredHistory(currentState).length;
+  if (nextFilteredHistory.length > previousFilteredCount) {
     visibleHistoryCount = Math.max(visibleHistoryCount, 10);
   }
+
   currentState = viewState;
   const sessionState = viewState.connected ? viewState.session.state : "offline";
   statusBadge.textContent = viewState.connected ? viewState.session.state : "Disconnected";
@@ -212,10 +300,7 @@ function renderState(viewState: BridgeViewState) {
   hotkeyValue.innerHTML = renderHotkey(viewState.hotkey);
   bridgeUrl.textContent = viewState.bridgeUrl;
   bridgeCommand.textContent = viewState.bridgeStartCommand;
-  const filteredHistory = (viewState.session.history || []).filter((item) => {
-    return historyClearedAfter === null || item.completed_at > historyClearedAfter;
-  });
-  renderHistory(filteredHistory);
+  renderHistory(nextFilteredHistory);
 
   const lockedForBusyWork = viewState.connected && (viewState.session.model_loading || ["starting", "transcribing"].includes(viewState.session.state));
   if (viewState.session.model_loading) {
@@ -227,8 +312,9 @@ function renderState(viewState: BridgeViewState) {
   } else {
     setOverlay(false);
   }
+
   toggleButton.disabled = !viewState.connected || viewState.session.model_loading || viewState.session.state === "transcribing";
-  clearHistoryButton.disabled = !viewState.session.history.length || lockedForBusyWork;
+  clearHistoryButton.disabled = !nextFilteredHistory.length || lockedForBusyWork;
 
   if (!viewState.connected) {
     toggleButton.textContent = "Bridge offline";
@@ -315,9 +401,7 @@ clearHistoryButton.addEventListener("click", () => {
 });
 showMoreButton.addEventListener("click", () => {
   visibleHistoryCount += 10;
-  if (currentState) {
-    renderHistory(currentState.session.history || []);
-  }
+  renderHistory(getFilteredHistory(currentState));
 });
 window.addEventListener("keydown", (event) => {
   const pressedR = event.key.toLowerCase() === "r";
@@ -326,7 +410,9 @@ window.addEventListener("keydown", (event) => {
     void toggleRecording();
   }
 });
+window.addEventListener("resize", syncViewportDensity);
 
+syncViewportDensity();
 setInterval(() => {
   void refreshState();
 }, 1000);
