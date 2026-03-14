@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -78,6 +79,7 @@ class DictationBridgeController:
             "dictation",
             "--format",
             "json",
+            "--bridge-mode",
         ]
         if self.cpu:
             command.append("--cpu")
@@ -180,6 +182,10 @@ class DictationBridgeController:
                     + (f": {stderr_preview}" if stderr_preview else "")
                 )
                 self._state = "error"
+                self._process = None
+                self._result_ready.notify_all()
+            elif self._process is process and process.poll() == 0:
+                self._process = None
                 self._result_ready.notify_all()
 
     def _stderr_reader(self) -> None:
@@ -203,21 +209,23 @@ class DictationBridgeController:
         with self._lock:
             return "\n".join(self._stderr_tail[-limit:])
 
-    def _write_newline(self) -> None:
+    def _signal_stop(self) -> None:
         process = self._process
-        if process is None or process.stdin is None or process.poll() is not None:
+        if process is None or process.poll() is not None:
             raise BridgeStateError("Dictation subprocess is not running")
-        process.stdin.write("\n")
-        process.stdin.flush()
+        if hasattr(signal, "SIGUSR1"):
+            os.kill(process.pid, signal.SIGUSR1)
+        else:  # pragma: no cover - non-Linux fallback
+            process.terminate()
 
     def start_session(self) -> dict[str, Any]:
-        self.ensure_running()
         with self._lock:
             if self._state in {"recording", "transcribing"}:
                 raise BridgeStateError(f"Cannot start while session is {self._state}")
-            self._write_newline()
+            self.ensure_running()
             self._state = "recording"
             self._started_at = time.time()
+            self._last_error = None
             return self.get_session_payload()
 
     def stop_session(self) -> dict[str, Any]:
@@ -225,7 +233,7 @@ class DictationBridgeController:
             if self._state != "recording":
                 raise BridgeStateError(f"Cannot stop while session is {self._state}")
             counter_before = self._transcript_counter
-            self._write_newline()
+            self._signal_stop()
             self._state = "transcribing"
             deadline = time.time() + self._transcript_timeout
             while self._transcript_counter == counter_before:

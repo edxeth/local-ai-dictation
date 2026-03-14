@@ -38,7 +38,7 @@ bun run start
 
 - `PARAKEET_BRIDGE_URL` — default `http://127.0.0.1:8765`
 - `PARAKEET_BRIDGE_COMMAND` — command shown in the UI as the WSL bridge startup command
-- `PARAKEET_HOTKEY` — default `CommandOrControl+Alt+Space`
+- `PARAKEET_HOTKEY` — default `CommandOrControl+Alt+R`
 
 Example:
 

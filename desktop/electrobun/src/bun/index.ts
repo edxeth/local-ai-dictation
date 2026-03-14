@@ -49,7 +49,7 @@ type DesktopRPC = {
 };
 
 const BRIDGE_URL = Bun.env.PARAKEET_BRIDGE_URL || "http://127.0.0.1:8765";
-const HOTKEY = Bun.env.PARAKEET_HOTKEY || "CommandOrControl+Alt+Space";
+const HOTKEY = Bun.env.PARAKEET_HOTKEY || "CommandOrControl+Alt+R";
 const BRIDGE_START_COMMAND = Bun.env.PARAKEET_BRIDGE_COMMAND || "parakeet bridge --host 127.0.0.1 --port 8765";
 const POLL_MS = 1000;
 

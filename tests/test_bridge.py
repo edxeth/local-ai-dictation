@@ -34,14 +34,16 @@ class _QueueStream:
         self._queue.put("")
 
 
+_FAKE_PROCESS_REGISTRY: dict[int, "_FakeProcess"] = {}
+_FAKE_NEXT_PID = 4242
+
+
 class _FakeStdin:
-    def __init__(self, process: "_FakeProcess") -> None:
-        self.process = process
+    def __init__(self) -> None:
         self.writes: list[str] = []
 
     def write(self, text: str) -> int:
         self.writes.append(text)
-        self.process.on_stdin_write(text)
         return len(text)
 
     def flush(self) -> None:
@@ -50,13 +52,15 @@ class _FakeStdin:
 
 class _FakeProcess:
     def __init__(self, command: list[str]) -> None:
+        global _FAKE_NEXT_PID
         self.command = command
-        self.pid = 4242
+        self.pid = _FAKE_NEXT_PID
+        _FAKE_NEXT_PID += 1
+        _FAKE_PROCESS_REGISTRY[self.pid] = self
         self.returncode: int | None = None
         self.stdout = _QueueStream()
         self.stderr = _QueueStream()
-        self.stdin = _FakeStdin(self)
-        self._newline_count = 0
+        self.stdin = _FakeStdin()
         self._transcript_count = 0
 
     def poll(self) -> int | None:
@@ -66,6 +70,7 @@ class _FakeProcess:
         self.returncode = 0
         self.stdout.close()
         self.stderr.close()
+        _FAKE_PROCESS_REGISTRY.pop(self.pid, None)
 
     def wait(self, timeout: float | None = None) -> int:
         return self.returncode or 0
@@ -73,22 +78,22 @@ class _FakeProcess:
     def kill(self) -> None:
         self.terminate()
 
-    def on_stdin_write(self, text: str) -> None:
-        if text != "\n":
-            return
-        self._newline_count += 1
-        if self._newline_count % 2 != 0:
-            return
+    def on_signal_stop(self) -> None:
         self._transcript_count += 1
         payload = {
             "schema_version": 1,
             "transcript": f"fake transcript {self._transcript_count}",
             "device": "cpu",
         }
-        threading.Thread(
-            target=lambda: self.stdout.push(json.dumps(payload) + "\n"),
-            daemon=True,
-        ).start()
+
+        def _finish() -> None:
+            self.stdout.push(json.dumps(payload) + "\n")
+            self.returncode = 0
+            self.stdout.close()
+            self.stderr.close()
+            _FAKE_PROCESS_REGISTRY.pop(self.pid, None)
+
+        threading.Thread(target=_finish, daemon=True).start()
 
 
 def _fake_popen_factory(commands: list[list[str]], kwargs_log: list[dict] | None = None):
@@ -101,9 +106,15 @@ def _fake_popen_factory(commands: list[list[str]], kwargs_log: list[dict] | None
     return _factory
 
 
-def test_bridge_controller_start_and_stop_round_trip():
+def _fake_os_kill(pid: int, sig: int) -> None:
+    process = _FAKE_PROCESS_REGISTRY[pid]
+    process.on_signal_stop()
+
+
+def test_bridge_controller_start_and_stop_round_trip(monkeypatch):
     commands: list[list[str]] = []
     kwargs_log: list[dict] = []
+    monkeypatch.setattr("parakeet.bridge.os.kill", _fake_os_kill)
     controller = DictationBridgeController(
         popen_factory=_fake_popen_factory(commands, kwargs_log),
         transcript_timeout=1.0,
@@ -118,13 +129,15 @@ def test_bridge_controller_start_and_stop_round_trip():
     assert commands[0][:5] == [sys.executable, "-u", "-m", "parakeet.cli", "dictation"]
     assert "--format" in commands[0]
     assert "json" in commands[0]
+    assert "--bridge-mode" in commands[0]
     assert "--no-clipboard" in commands[0]
     assert kwargs_log[0]["start_new_session"] is True
 
     controller.shutdown()
 
 
-def test_bridge_controller_rejects_double_start():
+def test_bridge_controller_rejects_double_start(monkeypatch):
+    monkeypatch.setattr("parakeet.bridge.os.kill", _fake_os_kill)
     controller = DictationBridgeController(
         popen_factory=_fake_popen_factory([]),
         transcript_timeout=1.0,
@@ -141,7 +154,8 @@ def test_bridge_controller_rejects_double_start():
         controller.shutdown()
 
 
-def test_bridge_controller_toggle_cycles_sessions():
+def test_bridge_controller_toggle_cycles_sessions(monkeypatch):
+    monkeypatch.setattr("parakeet.bridge.os.kill", _fake_os_kill)
     controller = DictationBridgeController(
         popen_factory=_fake_popen_factory([]),
         transcript_timeout=1.0,
@@ -159,7 +173,8 @@ def test_bridge_controller_toggle_cycles_sessions():
     controller.shutdown()
 
 
-def test_bridge_server_health_and_session_endpoints():
+def test_bridge_server_health_and_session_endpoints(monkeypatch):
+    monkeypatch.setattr("parakeet.bridge.os.kill", _fake_os_kill)
     controller = DictationBridgeController(
         popen_factory=_fake_popen_factory([]),
         transcript_timeout=1.0,

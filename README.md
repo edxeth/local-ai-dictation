@@ -197,7 +197,7 @@ Desktop notes:
 - the bridge is localhost-only and opt-in
 - the desktop app does not auto-start WSL services for you
 - only one recording session is supported at a time
-- default hotkey is `CommandOrControl+Alt+Space`
+- default hotkey is `CommandOrControl+Alt+R`
 - override bridge URL or hotkey with `PARAKEET_BRIDGE_URL`, `PARAKEET_BRIDGE_COMMAND`, and `PARAKEET_HOTKEY`
 
 ## Benchmark

@@ -18,7 +18,7 @@ import time
 import warnings
 import wave
 from contextlib import nullcontext
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from parakeet.audio import VAD_FRAME_SAMPLES, build_vad_backend, list_input_devices, record_until_vad_stop
 from parakeet.config import resolve_config
@@ -35,6 +35,7 @@ from parakeet.types import DictationConfig, TranscriptionEngine, TranscriptionRe
 
 
 _shutdown_event = threading.Event()
+_bridge_stop_event = threading.Event()
 _old_stdout = None
 _stderr_fd = None
 _devnull_fd = None
@@ -48,11 +49,16 @@ atexit.register(_cleanup_handler)
 
 
 def _signal_handler(signum, frame) -> None:  # pragma: no cover - signal plumbing
+    if hasattr(signal, "SIGUSR1") and signum == signal.SIGUSR1:
+        _bridge_stop_event.set()
+        return
     _shutdown_event.set()
 
 
 signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
+if hasattr(signal, "SIGUSR1"):
+    signal.signal(signal.SIGUSR1, _signal_handler)
 
 
 def _no_kbi_traceback(exc_type, exc, tb) -> None:
@@ -138,6 +144,12 @@ def add_cli_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParse
         type=str,
         default=None,
         help="PyAudio input device index or exact device name",
+    )
+    parser.add_argument(
+        "--bridge-mode",
+        action="store_true",
+        default=False,
+        help=argparse.SUPPRESS,
     )
     return parser
 
@@ -323,6 +335,8 @@ def record_audio_interruptible(
     config: DictationConfig,
     pyaudio_module: Any,
     sample_rate: int = 16000,
+    *,
+    stop_requested: Callable[[], bool] | None = None,
 ) -> bytes | None:
     status_stream = _status_stream(config)
     frames_per_buffer = VAD_FRAME_SAMPLES if config.vad else 1024
@@ -350,6 +364,9 @@ def record_audio_interruptible(
     audio_data: bytes | None = None
     print("🎤 Recording...", file=status_stream, flush=True)
 
+    if stop_requested is None:
+        stop_requested = lambda: _shutdown_event.is_set() or _manual_stop_requested()
+
     ctx = SilentSTDERR() if not config.debug else nullcontext()
     with ctx:
         try:
@@ -364,7 +381,7 @@ def record_audio_interruptible(
                 audio_data = record_until_vad_stop(
                     stream,
                     vad=vad_backend,
-                    stop_requested=lambda: _shutdown_event.is_set() or _manual_stop_requested(),
+                    stop_requested=stop_requested,
                     min_speech_ms=config.min_speech_ms,
                     max_silence_ms=config.max_silence_ms,
                     sample_rate=sample_rate,
@@ -373,7 +390,7 @@ def record_audio_interruptible(
             else:
                 frames: list[bytes] = []
                 while not _shutdown_event.is_set():
-                    if _manual_stop_requested(0.01):
+                    if stop_requested():
                         break
                     try:
                         data = stream.read(1024, exception_on_overflow=False)
@@ -456,6 +473,69 @@ def _transcribe_once(
         spinner_thread.join()
 
 
+def _run_bridge_controlled_dictation(
+    config: DictationConfig,
+    *,
+    pyaudio_module: Any,
+    pyperclip_module: Any,
+    nemo_asr: Any,
+    torch_module: Any,
+) -> int:
+    status_stream = _status_stream(config)
+    _bridge_stop_event.clear()
+
+    try:
+        model, _use_cuda, _load_start, _load_end = _load_model(config, nemo_asr, torch_module)
+    except ModelError as exc:
+        print(f"❌ Error: {exc}", file=status_stream)
+        return int(ExitCode.ERROR)
+
+    if _shutdown_event.is_set():
+        return int(ExitCode.OK)
+
+    sample_rate = 16000
+    audio_data = record_audio_interruptible(
+        config,
+        pyaudio_module,
+        sample_rate=sample_rate,
+        stop_requested=lambda: _shutdown_event.is_set() or _bridge_stop_event.is_set(),
+    )
+
+    if _shutdown_event.is_set():
+        return int(ExitCode.OK)
+
+    if not audio_data:
+        emit_transcription_result(
+            TranscriptionResult(text=""),
+            config,
+            pyperclip_module=pyperclip_module,
+            status_stream=status_stream,
+        )
+        return int(ExitCode.OK)
+
+    try:
+        transcription, temp_path, _infer_start, _infer_end = _transcribe_once(
+            config, model, audio_data, sample_rate
+        )
+    except ModelError as exc:
+        print(f"❌ Error: {exc}", file=status_stream)
+        return int(ExitCode.ERROR)
+
+    emit_transcription_result(
+        transcription,
+        config,
+        pyperclip_module=pyperclip_module,
+        status_stream=status_stream,
+    )
+
+    try:
+        os.unlink(temp_path)
+    except Exception:
+        pass
+
+    return int(ExitCode.OK)
+
+
 def run_dictation(args: argparse.Namespace) -> int:
     config = resolve_config(args, env=os.environ)
     status_stream = _status_stream(config)
@@ -471,6 +551,15 @@ def run_dictation(args: argparse.Namespace) -> int:
 
     if config.debug and config.log_file != "-":
         redirect_library_loggers_to_root_file()
+
+    if bool(getattr(args, "bridge_mode", False)):
+        return _run_bridge_controlled_dictation(
+            config,
+            pyaudio_module=pyaudio_module,
+            pyperclip_module=pyperclip_module,
+            nemo_asr=nemo_asr,
+            torch_module=torch_module,
+        )
 
     try:
         model, use_cuda, load_start, load_end = _load_model(config, nemo_asr, torch_module)
