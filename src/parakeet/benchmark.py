@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 from dataclasses import asdict
+import io
 import json
 import math
+import os
 from pathlib import Path
 import statistics
 import sys
@@ -15,6 +18,43 @@ from parakeet.errors import AppError, ExitCode, MODEL_TRANSCRIBE_FAILED
 from parakeet.model import load_engine, transcribe_wav
 from parakeet.types import BenchmarkReport, DictationConfig
 import unicodedata
+
+
+class _RedirectStdoutToStderr:
+    def __enter__(self):
+        self._stdout_fd = None
+        self._saved_stdout_fd = None
+        self._python_redirect = None
+
+        try:
+            stdout_fd = sys.stdout.fileno()
+            stderr_fd = sys.stderr.fileno()
+        except (AttributeError, io.UnsupportedOperation, ValueError):
+            self._python_redirect = redirect_stdout(sys.stderr)
+            self._python_redirect.__enter__()
+            return self
+
+        if stdout_fd == stderr_fd:
+            return self
+
+        sys.stdout.flush()
+        sys.stderr.flush()
+        self._stdout_fd = stdout_fd
+        self._saved_stdout_fd = os.dup(stdout_fd)
+        os.dup2(stderr_fd, stdout_fd)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._python_redirect is not None:
+            return self._python_redirect.__exit__(exc_type, exc, tb)
+
+        if self._stdout_fd is not None and self._saved_stdout_fd is not None:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os.dup2(self._saved_stdout_fd, self._stdout_fd)
+            os.close(self._saved_stdout_fd)
+            self._saved_stdout_fd = None
+        return False
 
 
 def normalize_transcript(text: str) -> str:
@@ -160,12 +200,13 @@ def run_benchmark_command(
     check_expected: bool = False,
 ) -> int:
     try:
-        report = benchmark_fixture(
-            fixture_path,
-            runs=runs,
-            cpu=cpu,
-            check_expected=check_expected,
-        )
+        with _RedirectStdoutToStderr():
+            report = benchmark_fixture(
+                fixture_path,
+                runs=runs,
+                cpu=cpu,
+                check_expected=check_expected,
+            )
     except (AppError, FileNotFoundError, ValueError) as exc:
         print(f"Benchmark error: {exc}", file=sys.stderr)
         return int(ExitCode.ERROR)

@@ -101,6 +101,44 @@ def test_benchmark_command_emits_json_schema(monkeypatch, tmp_path, capsys):
 
 
 
+def test_benchmark_command_redirects_noisy_runtime_stdout_away_from_json(monkeypatch, tmp_path, capsys):
+    fixture = tmp_path / "short_16k.wav"
+    expected = tmp_path / "short_16k.expected.txt"
+    _write_wav(fixture)
+    expected.write_text("", encoding="utf-8")
+
+    def noisy_load_engine(config):
+        print("runtime-info-log")
+        return _FakeEngine()
+
+    monkeypatch.setattr("parakeet.benchmark.load_engine", noisy_load_engine)
+    monkeypatch.setattr(
+        "parakeet.benchmark.transcribe_wav",
+        lambda engine, path: TranscriptionResult(text="", device="cpu"),
+    )
+
+    exit_code = main(
+        [
+            "benchmark",
+            "--fixture",
+            str(fixture),
+            "--runs",
+            "1",
+            "--json",
+            "--check-expected",
+            "--cpu",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["schema_version"] == 1
+    assert "runtime-info-log" not in captured.out
+    assert "runtime-info-log" in captured.err
+
+
+
 def test_benchmark_command_requires_sidecar_when_check_expected_is_enabled(tmp_path, capsys):
     fixture = tmp_path / "short_16k.wav"
     _write_wav(fixture)
