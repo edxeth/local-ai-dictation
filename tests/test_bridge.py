@@ -1,0 +1,192 @@
+from __future__ import annotations
+
+import importlib
+import json
+from pathlib import Path
+import queue
+import threading
+import time
+import urllib.request
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+bridge_module = importlib.import_module("parakeet.bridge")
+BridgeStateError = bridge_module.BridgeStateError
+DictationBridgeController = bridge_module.DictationBridgeController
+
+
+class _QueueStream:
+    def __init__(self) -> None:
+        self._queue: queue.Queue[str] = queue.Queue()
+
+    def readline(self) -> str:
+        return self._queue.get(timeout=2)
+
+    def push(self, text: str) -> None:
+        self._queue.put(text)
+
+    def close(self) -> None:
+        self._queue.put("")
+
+
+class _FakeStdin:
+    def __init__(self, process: "_FakeProcess") -> None:
+        self.process = process
+        self.writes: list[str] = []
+
+    def write(self, text: str) -> int:
+        self.writes.append(text)
+        self.process.on_stdin_write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+
+class _FakeProcess:
+    def __init__(self, command: list[str]) -> None:
+        self.command = command
+        self.pid = 4242
+        self.returncode: int | None = None
+        self.stdout = _QueueStream()
+        self.stderr = _QueueStream()
+        self.stdin = _FakeStdin(self)
+        self._newline_count = 0
+        self._transcript_count = 0
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.returncode = 0
+        self.stdout.close()
+        self.stderr.close()
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode or 0
+
+    def kill(self) -> None:
+        self.terminate()
+
+    def on_stdin_write(self, text: str) -> None:
+        if text != "\n":
+            return
+        self._newline_count += 1
+        if self._newline_count % 2 != 0:
+            return
+        self._transcript_count += 1
+        payload = {
+            "schema_version": 1,
+            "transcript": f"fake transcript {self._transcript_count}",
+            "device": "cpu",
+        }
+        threading.Thread(
+            target=lambda: self.stdout.push(json.dumps(payload) + "\n"),
+            daemon=True,
+        ).start()
+
+
+def _fake_popen_factory(commands: list[list[str]]):
+    def _factory(command, **kwargs):
+        commands.append(command)
+        return _FakeProcess(command)
+
+    return _factory
+
+
+def test_bridge_controller_start_and_stop_round_trip():
+    commands: list[list[str]] = []
+    controller = DictationBridgeController(
+        popen_factory=_fake_popen_factory(commands),
+        transcript_timeout=1.0,
+    )
+
+    started = controller.start_session()
+    stopped = controller.stop_session()
+
+    assert started["state"] == "recording"
+    assert stopped["state"] == "idle"
+    assert stopped["last_transcript"]["transcript"] == "fake transcript 1"
+    assert commands[0][:5] == [sys.executable, "-u", "-m", "parakeet.cli", "dictation"]
+    assert "--format" in commands[0]
+    assert "json" in commands[0]
+    assert "--no-clipboard" in commands[0]
+
+    controller.shutdown()
+
+
+def test_bridge_controller_rejects_double_start():
+    controller = DictationBridgeController(
+        popen_factory=_fake_popen_factory([]),
+        transcript_timeout=1.0,
+    )
+
+    controller.start_session()
+    try:
+        try:
+            controller.start_session()
+            raise AssertionError("expected BridgeStateError")
+        except BridgeStateError as exc:
+            assert "recording" in str(exc)
+    finally:
+        controller.shutdown()
+
+
+def test_bridge_controller_toggle_cycles_sessions():
+    controller = DictationBridgeController(
+        popen_factory=_fake_popen_factory([]),
+        transcript_timeout=1.0,
+    )
+
+    first = controller.toggle_session()
+    second = controller.toggle_session()
+    third = controller.toggle_session()
+
+    assert first["state"] == "recording"
+    assert second["state"] == "idle"
+    assert second["last_transcript"]["transcript"] == "fake transcript 1"
+    assert third["state"] == "recording"
+
+    controller.shutdown()
+
+
+def test_bridge_server_health_and_session_endpoints():
+    controller = DictationBridgeController(
+        popen_factory=_fake_popen_factory([]),
+        transcript_timeout=1.0,
+    )
+    server = bridge_module.make_bridge_server("127.0.0.1", 0, controller=controller)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
+            health = json.load(response)
+        assert health["schema_version"] == 1
+        assert health["session"]["state"] == "idle"
+
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/session/toggle",
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            started = json.load(response)
+        assert started["state"] == "recording"
+
+        with urllib.request.urlopen(request, timeout=2) as response:
+            stopped = json.load(response)
+        assert stopped["state"] == "idle"
+        assert stopped["last_transcript"]["transcript"] == "fake transcript 1"
+    finally:
+        server.shutdown()
+        server.server_close()
+        controller.shutdown()
+        thread.join(timeout=1)

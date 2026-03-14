@@ -1,0 +1,172 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #0f1220;
+  color: #eef2ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: radial-gradient(circle at top, #1b2140 0%, #0f1220 55%);
+}
+
+body {
+  padding: 18px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hero,
+.row {
+  display: flex;
+  align-items: center;
+}
+
+.hero,
+.spread {
+  justify-content: space-between;
+}
+
+.middle {
+  align-items: center;
+}
+
+h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.sub {
+  margin: 6px 0 0;
+  color: #b7c0ff;
+  font-size: 13px;
+}
+
+.card {
+  background: rgba(18, 24, 44, 0.88);
+  border: 1px solid rgba(142, 156, 255, 0.18);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+}
+
+.badge {
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.badge.offline,
+.badge.error {
+  background: rgba(248, 113, 113, 0.18);
+  color: #fecaca;
+}
+
+.badge.idle {
+  background: rgba(96, 165, 250, 0.18);
+  color: #bfdbfe;
+}
+
+.badge.recording {
+  background: rgba(248, 113, 113, 0.18);
+  color: #fda4af;
+}
+
+.badge.transcribing {
+  background: rgba(250, 204, 21, 0.18);
+  color: #fde68a;
+}
+
+.label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #95a0dd;
+}
+
+.value,
+.status-line,
+.meta,
+.mono,
+.command,
+.transcript,
+.error-box {
+  margin-top: 8px;
+}
+
+.value,
+.status-line,
+.meta {
+  color: #eef2ff;
+}
+
+.mono,
+.command,
+.transcript,
+.error-box {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.command,
+.transcript,
+.error-box {
+  background: rgba(7, 10, 20, 0.8);
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px solid rgba(142, 156, 255, 0.14);
+}
+
+.transcript-card {
+  flex: 1;
+}
+
+.transcript {
+  min-height: 120px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.transcript.empty,
+.error-box {
+  color: #b8c1f3;
+}
+
+.top-gap {
+  margin-top: 12px;
+}
+
+button {
+  border: 0;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button.primary {
+  background: linear-gradient(135deg, #7c3aed, #2563eb);
+  color: white;
+}
+
+button.secondary {
+  background: rgba(142, 156, 255, 0.15);
+  color: #eef2ff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}

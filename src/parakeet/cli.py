@@ -10,6 +10,7 @@ from typing import Sequence
 
 from parakeet.audio import list_input_devices
 from parakeet.benchmark import run_benchmark_command
+from parakeet.bridge import run_bridge_server
 from parakeet.dictation import add_cli_arguments
 from parakeet.doctor import collect_doctor_report, doctor_exit_code, render_doctor_text
 
@@ -93,6 +94,74 @@ def build_parser() -> argparse.ArgumentParser:
         help="Require and compare the expected transcript sidecar.",
     )
     benchmark_parser.set_defaults(handler=_run_benchmark_namespace)
+
+    bridge_parser = subparsers.add_parser(
+        "bridge",
+        help="Run an opt-in localhost control bridge for a desktop app.",
+        description="Run an opt-in localhost control bridge for a desktop app.",
+    )
+    bridge_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host interface to bind the bridge to.",
+    )
+    bridge_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="TCP port to bind the bridge to.",
+    )
+    bridge_parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Force CPU inference for bridge-controlled dictation sessions.",
+    )
+    bridge_parser.add_argument(
+        "--input-device",
+        type=str,
+        default=None,
+        help="PyAudio input device index or exact device name.",
+    )
+    bridge_parser.add_argument(
+        "--vad",
+        action="store_true",
+        help="Enable VAD-driven auto-stop for bridge-controlled sessions.",
+    )
+    bridge_parser.add_argument(
+        "--max-silence-ms",
+        type=int,
+        default=1200,
+        help="Silence duration required before VAD auto-stop becomes eligible.",
+    )
+    bridge_parser.add_argument(
+        "--min-speech-ms",
+        type=int,
+        default=300,
+        help="Minimum cumulative voiced duration before VAD stop can trigger.",
+    )
+    bridge_parser.add_argument(
+        "--vad-mode",
+        type=int,
+        choices=[0, 1, 2, 3],
+        default=2,
+        help="WebRTC-VAD aggressiveness for bridge-controlled sessions.",
+    )
+    bridge_parser.add_argument(
+        "--clipboard",
+        action="store_true",
+        help="Enable clipboard copy for bridge-controlled sessions.",
+    )
+    bridge_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging for the bridge-controlled dictation subprocess.",
+    )
+    bridge_parser.add_argument(
+        "--log-file",
+        default="transcriber.debug.log",
+        help="Debug log file used by the dictation subprocess.",
+    )
+    bridge_parser.set_defaults(handler=_run_bridge_namespace)
     return parser
 
 
@@ -141,6 +210,10 @@ def _run_benchmark_namespace(namespace: argparse.Namespace) -> int:
         json_output=bool(namespace.json_output),
         check_expected=bool(namespace.check_expected),
     )
+
+
+def _run_bridge_namespace(namespace: argparse.Namespace) -> int:
+    return run_bridge_server(namespace)
 
 
 def run_dictation_argv(argv: Sequence[str] | None = None) -> int:

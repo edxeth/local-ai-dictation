@@ -88,6 +88,7 @@ Subcommands:
 - `parakeet devices`
 - `parakeet doctor`
 - `parakeet benchmark`
+- `parakeet bridge`
 
 ## Dictation
 
@@ -168,6 +169,31 @@ Exit codes:
 - `2`: recording blocked
 - `3`: degraded but usable
 
+## Desktop bridge and Windows app
+
+For a small Windows control surface with a button, tray menu, and global hotkey, use the opt-in bridge plus the Electrobun app.
+
+Start the backend bridge in WSL first:
+
+```bash
+parakeet bridge --host 127.0.0.1 --port 8765
+```
+
+Then launch the desktop app from `desktop/electrobun/`:
+
+```bash
+cd desktop/electrobun
+bun install
+bun run start
+```
+
+Desktop notes:
+- the bridge is localhost-only and opt-in
+- the desktop app does not auto-start WSL services for you
+- only one recording session is supported at a time
+- default hotkey is `CommandOrControl+Alt+Space`
+- override bridge URL or hotkey with `PARAKEET_BRIDGE_URL`, `PARAKEET_BRIDGE_COMMAND`, and `PARAKEET_HOTKEY`
+
 ## Benchmark
 
 Benchmark deterministic prerecorded WAV fixtures only:
@@ -242,7 +268,9 @@ python -m build
 parakeet devices --json
 parakeet doctor --json
 parakeet doctor --check-model-cache --json
+parakeet bridge --help
 parakeet benchmark --fixture tests/fixtures/short_16k.wav --runs 2 --json --check-expected
+cd desktop/electrobun && bun install && bun run check
 ```
 
 ## Troubleshooting
