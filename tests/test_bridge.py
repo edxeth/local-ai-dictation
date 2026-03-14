@@ -125,7 +125,7 @@ def test_bridge_controller_start_and_stop_round_trip(monkeypatch):
     time.sleep(0.05)
     stopped = controller.stop_session()
 
-    assert started["state"] == "recording"
+    assert started["state"] == "starting"
     assert stopped["state"] == "idle"
     assert stopped["last_transcript"]["transcript"] == "fake transcript 1"
     assert commands[0][:5] == [sys.executable, "-u", "-m", "parakeet.cli", "dictation"]
@@ -151,7 +151,7 @@ def test_bridge_controller_rejects_double_start(monkeypatch):
             controller.start_session()
             raise AssertionError("expected BridgeStateError")
         except BridgeStateError as exc:
-            assert "recording" in str(exc)
+            assert "starting" in str(exc)
     finally:
         controller.shutdown()
 
@@ -168,10 +168,10 @@ def test_bridge_controller_toggle_cycles_sessions(monkeypatch):
     second = controller.toggle_session()
     third = controller.toggle_session()
 
-    assert first["state"] == "recording"
+    assert first["state"] == "starting"
     assert second["state"] == "idle"
     assert second["last_transcript"]["transcript"] == "fake transcript 1"
-    assert third["state"] == "recording"
+    assert third["state"] == "starting"
 
     controller.shutdown()
 
@@ -201,7 +201,7 @@ def test_bridge_server_health_and_session_endpoints(monkeypatch):
         )
         with urllib.request.urlopen(request, timeout=2) as response:
             started = json.load(response)
-        assert started["state"] == "recording"
+        assert started["state"] == "starting"
 
         with urllib.request.urlopen(request, timeout=2) as response:
             stopped = json.load(response)

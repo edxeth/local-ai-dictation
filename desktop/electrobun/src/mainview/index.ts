@@ -2,7 +2,7 @@ import Electrobun, { Electroview } from "electrobun/view";
 
 type SessionPayload = {
   schema_version: number;
-  state: "stopped" | "idle" | "recording" | "transcribing" | "error";
+  state: "stopped" | "idle" | "starting" | "recording" | "transcribing" | "error";
   started_at: number | null;
   last_completed_at: number | null;
   last_transcript: {
@@ -97,10 +97,12 @@ function renderState(viewState: BridgeViewState) {
   bridgeCommand.textContent = viewState.bridgeStartCommand;
 
   const transcript = viewState.session.last_transcript;
+  const cancelledBeforeRecording = Boolean(transcript?.metadata?.cancelled_before_recording);
   if (transcript) {
-    transcriptText.textContent = transcript.transcript;
-    transcriptText.classList.remove("empty");
+    transcriptText.textContent = transcript.transcript || (cancelledBeforeRecording ? "Cancelled before recording started." : "");
+    transcriptText.classList.toggle("empty", !transcriptText.textContent);
     transcriptMeta.textContent = [
+      cancelledBeforeRecording ? "cancelled before recording started" : null,
       transcript.device ? `device: ${transcript.device}` : null,
       `completed: ${formatTimestamp(viewState.session.last_completed_at)}`,
     ]
@@ -115,6 +117,9 @@ function renderState(viewState: BridgeViewState) {
   if (!viewState.connected) {
     toggleButton.textContent = "Bridge offline";
     statusLine.textContent = "Start the WSL bridge command below, then use the button or hotkey.";
+  } else if (viewState.session.state === "starting") {
+    toggleButton.textContent = "Cancel loading";
+    statusLine.textContent = "Loading model. Wait for recording to start before speaking, or click again to cancel.";
   } else if (viewState.session.state === "recording") {
     toggleButton.textContent = "Stop recording";
     statusLine.textContent = `Recording in progress since ${formatTimestamp(viewState.session.started_at)}.`;
@@ -149,7 +154,7 @@ async function toggleRecording() {
   setBusy(true);
   try {
     const current = await electrobun.rpc!.request.getBridgeState({});
-    const next = current.connected && current.session.state === "recording"
+    const next = current.connected && ["starting", "recording"].includes(current.session.state)
       ? await electrobun.rpc!.request.stopRecording({})
       : await electrobun.rpc!.request.startRecording({});
     renderState(next);

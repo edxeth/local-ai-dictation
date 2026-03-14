@@ -2,7 +2,7 @@ import { BrowserView, BrowserWindow, GlobalShortcut, Tray, type RPCSchema } from
 
 type SessionPayload = {
   schema_version: number;
-  state: "stopped" | "idle" | "recording" | "transcribing" | "error";
+  state: "stopped" | "idle" | "starting" | "recording" | "transcribing" | "error";
   started_at: number | null;
   last_completed_at: number | null;
   last_transcript: {
@@ -185,6 +185,12 @@ console.log("BrowserWindow created");
 
 tray = new Tray({ title: "Parakeet" });
 console.log("Tray created");
+
+mainWindow.on("close", () => {
+  GlobalShortcut.unregisterAll();
+  tray?.remove();
+  process.exit(0);
+});
 tray.setMenu([
   { type: "normal", label: "Open Parakeet", action: "open" },
   { type: "normal", label: `Toggle Recording (${HOTKEY})`, action: "toggle" },

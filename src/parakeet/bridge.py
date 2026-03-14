@@ -207,6 +207,7 @@ class DictationBridgeController:
                 self._stderr_tail.append(text)
                 if "🎤 Recording..." in text:
                     self._capture_started = True
+                    self._state = "recording"
                 if len(self._stderr_tail) > self._stderr_tail_limit:
                     self._stderr_tail = self._stderr_tail[-self._stderr_tail_limit :]
 
@@ -225,17 +226,17 @@ class DictationBridgeController:
 
     def start_session(self) -> dict[str, Any]:
         with self._lock:
-            if self._state in {"recording", "transcribing"}:
+            if self._state in {"starting", "recording", "transcribing"}:
                 raise BridgeStateError(f"Cannot start while session is {self._state}")
             self.ensure_running()
-            self._state = "recording"
+            self._state = "starting"
             self._started_at = time.time()
             self._last_error = None
             return self.get_session_payload()
 
     def stop_session(self) -> dict[str, Any]:
         with self._result_ready:
-            if self._state != "recording":
+            if self._state not in {"starting", "recording"}:
                 raise BridgeStateError(f"Cannot stop while session is {self._state}")
 
             if not self._capture_started:
@@ -275,7 +276,7 @@ class DictationBridgeController:
     def toggle_session(self) -> dict[str, Any]:
         with self._lock:
             state = self._state
-        if state == "recording":
+        if state in {"starting", "recording"}:
             return self.stop_session()
         if state == "transcribing":
             raise BridgeStateError("Session is still transcribing")
