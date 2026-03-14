@@ -44,17 +44,11 @@ type DesktopRPC = {
       toggleRecording: { params: {}; response: BridgeViewState };
       showWindow: { params: {}; response: { success: true } };
     };
-    messages: {
-      bridgeStateUpdated: { params: BridgeViewState };
-      bridgeError: { params: { message: string } };
-    };
+    messages: {};
   };
   webview: {
     requests: {};
-    messages: {
-      rendererBooted: { params: { href: string } };
-      rendererError: { params: { message: string } };
-    };
+    messages: {};
   };
 };
 
@@ -68,14 +62,10 @@ const rpc = Electroview.defineRPC<DesktopRPC>({
 
 const electrobun = new Electrobun.Electroview({ rpc });
 
-window.addEventListener("error", (event) => {
-  try {
-    (electrobun.rpc as any)?.send?.rendererError({ message: event.message || "unknown renderer error" });
-  } catch {
-    // ignore transport bootstrap failures while reporting renderer errors
-  }
-});
-
+const busyOverlay = document.getElementById("busyOverlay") as HTMLDivElement;
+const busyTitle = document.getElementById("busyTitle") as HTMLDivElement;
+const busyMessage = document.getElementById("busyMessage") as HTMLDivElement;
+const appShell = document.getElementById("appShell") as HTMLDivElement;
 const statusBadge = document.getElementById("statusBadge") as HTMLDivElement;
 const hotkeyValue = document.getElementById("hotkeyValue") as HTMLDivElement;
 const toggleButton = document.getElementById("toggleButton") as HTMLButtonElement;
@@ -87,6 +77,10 @@ const historyList = document.getElementById("historyList") as HTMLDivElement;
 const errorBox = document.getElementById("errorBox") as HTMLPreElement;
 const refreshButton = document.getElementById("refreshButton") as HTMLButtonElement;
 
+window.addEventListener("error", (event) => {
+  errorBox.textContent = event.message || "unknown renderer error";
+});
+
 let currentState: BridgeViewState | null = null;
 
 function formatTimestamp(timestamp: number | null): string {
@@ -97,6 +91,14 @@ function formatTimestamp(timestamp: number | null): string {
 function setBusy(busy: boolean) {
   toggleButton.disabled = busy;
   refreshButton.disabled = busy;
+}
+
+function setOverlay(visible: boolean, title = "Working…", message = "Please wait.") {
+  busyOverlay.classList.toggle("hidden", !visible);
+  appShell.classList.toggle("locked", visible);
+  busyOverlay.setAttribute("aria-hidden", visible ? "false" : "true");
+  busyTitle.textContent = title;
+  busyMessage.textContent = message;
 }
 
 async function copyTranscript(text: string) {
@@ -153,6 +155,17 @@ function renderState(viewState: BridgeViewState) {
   bridgeUrl.textContent = viewState.bridgeUrl;
   bridgeCommand.textContent = viewState.bridgeStartCommand;
   renderHistory(viewState.session.history || []);
+
+  const lockedForBusyWork = viewState.connected && ["starting", "transcribing"].includes(viewState.session.state);
+  if (viewState.session.state === "starting") {
+    setOverlay(true, "Loading model…", "Parakeet is warming up. Controls are temporarily locked until recording is ready or loading is cancelled.");
+  } else if (viewState.session.state === "transcribing") {
+    setOverlay(true, "Transcribing…", "Audio has been captured. Please wait while Parakeet generates the transcript.");
+  } else {
+    setOverlay(false);
+  }
+  toggleButton.disabled = !viewState.connected || viewState.session.state === "transcribing";
+  refreshButton.disabled = lockedForBusyWork;
 
   if (!viewState.connected) {
     toggleButton.textContent = "Bridge offline";
@@ -222,19 +235,5 @@ window.addEventListener("keydown", (event) => {
     void toggleRecording();
   }
 });
-
-(electrobun.rpc as any)?.addMessageListener("bridgeStateUpdated", (state: BridgeViewState) => {
-  renderState(state);
-});
-
-(electrobun.rpc as any)?.addMessageListener("bridgeError", (payload: { message: string }) => {
-  errorBox.textContent = payload.message;
-});
-
-try {
-  (electrobun.rpc as any)?.send?.rendererBooted({ href: window.location.href });
-} catch {
-  // ignore if transport is not ready yet
-}
 
 void refreshState();

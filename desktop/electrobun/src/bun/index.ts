@@ -36,25 +36,17 @@ type DesktopRPC = {
       toggleRecording: { params: {}; response: BridgeViewState };
       showWindow: { params: {}; response: { success: true } };
     };
-    messages: {
-      bridgeStateUpdated: { params: BridgeViewState };
-      bridgeError: { params: { message: string } };
-    };
+    messages: {};
   }>;
   webview: RPCSchema<{
     requests: {};
-    messages: {
-      rendererBooted: { params: { href: string } };
-      rendererError: { params: { message: string } };
-    };
+    messages: {};
   }>;
 };
 
 const BRIDGE_URL = Bun.env.PARAKEET_BRIDGE_URL || "http://127.0.0.1:8765";
 const HOTKEY = Bun.env.PARAKEET_HOTKEY || "CommandOrControl+Alt+R";
 const BRIDGE_START_COMMAND = Bun.env.PARAKEET_BRIDGE_COMMAND || "parakeet bridge --host 127.0.0.1 --port 8765";
-const POLL_MS = 1000;
-
 const emptySession = (): SessionPayload => ({
   schema_version: 1,
   state: "stopped",
@@ -62,6 +54,8 @@ const emptySession = (): SessionPayload => ({
   last_completed_at: null,
   last_transcript: null,
   last_error: null,
+  model_loaded: false,
+  history: [],
   config: {},
   stderr_tail: [],
 });
@@ -142,32 +136,15 @@ const rpc = BrowserView.defineRPC<DesktopRPC>({
         return { success: true } as const;
       },
     },
-    messages: {
-      rendererBooted: ({ href }) => {
-        console.log(`Renderer booted: ${href}`);
-      },
-      rendererError: ({ message }) => {
-        console.error(`Renderer error: ${message}`);
-      },
-    },
+    messages: {},
   },
 });
-
-async function broadcastBridgeState() {
-  const state = await readBridgeState();
-  (rpc as any).send.bridgeStateUpdated(state);
-  return state;
-}
 
 async function toggleFromBackground() {
   try {
     await fetchBridgeJson("/session/toggle", { method: "POST", body: "{}" });
-    await broadcastBridgeState();
   } catch (error) {
-    (rpc as any).send.bridgeError({
-      message: error instanceof Error ? error.message : String(error),
-    });
-    await broadcastBridgeState();
+    console.error(`Background toggle failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -224,12 +201,6 @@ if (!registeredHotkey) {
   console.warn(`Failed to register global hotkey: ${HOTKEY}`);
 }
 console.log(`GlobalShortcut register result: ${registeredHotkey}`);
-
-setInterval(() => {
-  void broadcastBridgeState();
-}, POLL_MS);
-
-void broadcastBridgeState();
 
 console.log("Parakeet desktop app started");
 console.log(`Bridge URL: ${BRIDGE_URL}`);
