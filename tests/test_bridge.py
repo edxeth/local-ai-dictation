@@ -91,9 +91,11 @@ class _FakeProcess:
         ).start()
 
 
-def _fake_popen_factory(commands: list[list[str]]):
+def _fake_popen_factory(commands: list[list[str]], kwargs_log: list[dict] | None = None):
     def _factory(command, **kwargs):
         commands.append(command)
+        if kwargs_log is not None:
+            kwargs_log.append(kwargs)
         return _FakeProcess(command)
 
     return _factory
@@ -101,8 +103,9 @@ def _fake_popen_factory(commands: list[list[str]]):
 
 def test_bridge_controller_start_and_stop_round_trip():
     commands: list[list[str]] = []
+    kwargs_log: list[dict] = []
     controller = DictationBridgeController(
-        popen_factory=_fake_popen_factory(commands),
+        popen_factory=_fake_popen_factory(commands, kwargs_log),
         transcript_timeout=1.0,
     )
 
@@ -116,6 +119,7 @@ def test_bridge_controller_start_and_stop_round_trip():
     assert "--format" in commands[0]
     assert "json" in commands[0]
     assert "--no-clipboard" in commands[0]
+    assert kwargs_log[0]["start_new_session"] is True
 
     controller.shutdown()
 
@@ -169,7 +173,7 @@ def test_bridge_server_health_and_session_endpoints():
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
             health = json.load(response)
         assert health["schema_version"] == 1
-        assert health["session"]["state"] == "idle"
+        assert health["session"]["state"] == "stopped"
 
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}/session/toggle",

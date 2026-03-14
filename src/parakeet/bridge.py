@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import signal
 import subprocess
 import sys
 import threading
 import time
-from types import SimpleNamespace
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
@@ -109,6 +109,7 @@ class DictationBridgeController:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
 
     def ensure_running(self) -> None:
@@ -246,11 +247,10 @@ class DictationBridgeController:
         return self.start_session()
 
     def health_payload(self) -> dict[str, Any]:
-        self.ensure_running()
         with self._lock:
             return {
                 "schema_version": BRIDGE_SCHEMA_VERSION,
-                "ok": self._process is not None and self._process.poll() is None,
+                "ok": True,
                 "bridge": {
                     "backend": "parakeet-dictation-bridge",
                     "python": self.python_executable,
@@ -380,18 +380,29 @@ def run_bridge_server(namespace: Any) -> int:
     host = str(getattr(namespace, "host", "127.0.0.1"))
     port = int(getattr(namespace, "port", 8765))
     controller = build_bridge_controller_from_namespace(namespace)
-    controller.ensure_running()
     server = make_bridge_server(host, port, controller=controller)
+
+    shutdown_requested = threading.Event()
+    previous_sigint = signal.getsignal(signal.SIGINT)
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def _request_shutdown(signum: int, frame: Any) -> None:
+        shutdown_requested.set()
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGINT, _request_shutdown)
+    signal.signal(signal.SIGTERM, _request_shutdown)
 
     print(f"Parakeet bridge listening on http://{host}:{port}")
     print("Run the Windows app, then use its button or hotkey to start/stop recording.")
 
     try:
         server.serve_forever(poll_interval=0.25)
-    except KeyboardInterrupt:
-        pass
     finally:
-        server.shutdown()
+        signal.signal(signal.SIGINT, previous_sigint)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        if not shutdown_requested.is_set():
+            server.shutdown()
         server.server_close()
         controller.shutdown()
     return 0
