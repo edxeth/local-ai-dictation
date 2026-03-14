@@ -75,7 +75,7 @@
         "Run automated tests proving punctuation-only and case-only differences still match while lexical differences do not",
         "Verify a `.expected.txt` sidecar is discovered and normalized exactly as the source SPEC requires"
       ],
-      "passes": false,
+      "passes": true,
       "regression_notes": ""
     },
     {
