@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+import os
+from pathlib import Path
+import shutil
+import subprocess
+from typing import Any, Mapping
 
 from parakeet.types import AudioDevice
 
@@ -67,3 +71,102 @@ def list_input_devices(pyaudio_module: PyAudioModule | None = None) -> list[Audi
         return sorted(devices, key=lambda device: device.id)
     finally:
         pa.terminate()
+
+
+_CONNECTION_FAILURE_MARKERS = (
+    "connection refused",
+    "connection failure",
+    "failed to connect",
+    "timed out",
+    "timeout",
+)
+
+
+def _classify_probe_failure(output: str) -> str:
+    lowered = output.lower()
+    if any(marker in lowered for marker in _CONNECTION_FAILURE_MARKERS):
+        return "unreachable"
+    return "unknown"
+
+
+def probe_audio_backend(
+    *,
+    env: Mapping[str, str] | None = None,
+    pactl_timeout: float = 1.5,
+    wslg_socket_path: Path = Path("/mnt/wslg/PulseServer"),
+) -> dict[str, str]:
+    source = os.environ if env is None else env
+    pulse_server = source.get("PULSE_SERVER")
+    has_wslg_socket = wslg_socket_path.exists()
+
+    if pulse_server and pulse_server.startswith("tcp:"):
+        transport = "tcp"
+    elif (pulse_server and pulse_server.startswith("unix:")) or has_wslg_socket:
+        transport = "unix"
+    elif pulse_server:
+        transport = "unknown"
+    else:
+        transport = "none"
+
+    pactl_path = shutil.which("pactl")
+    if pactl_path is None:
+        return {
+            "status": "binary_missing",
+            "transport": transport,
+            "detail": "pactl binary is not installed",
+        }
+
+    if not pulse_server and not has_wslg_socket:
+        return {
+            "status": "not_configured",
+            "transport": "none",
+            "detail": "PULSE_SERVER is unset and the WSLg Pulse socket is unavailable",
+        }
+
+    if transport == "unknown":
+        return {
+            "status": "unknown",
+            "transport": "unknown",
+            "detail": f"Unsupported PULSE_SERVER transport: {pulse_server}",
+        }
+
+    probe_env = dict(source)
+    if not pulse_server and has_wslg_socket:
+        probe_env["PULSE_SERVER"] = f"unix:{wslg_socket_path}"
+
+    try:
+        completed = subprocess.run(
+            [pactl_path, "info"],
+            capture_output=True,
+            env=probe_env,
+            text=True,
+            timeout=pactl_timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "unreachable",
+            "transport": transport,
+            "detail": f"pactl info timed out after {pactl_timeout:.1f}s",
+        }
+    except OSError as exc:
+        return {
+            "status": "unknown",
+            "transport": transport,
+            "detail": str(exc),
+        }
+
+    if completed.returncode == 0:
+        return {
+            "status": "reachable",
+            "transport": transport,
+            "detail": "pactl info succeeded",
+        }
+
+    combined_output = "\n".join(part for part in [completed.stdout.strip(), completed.stderr.strip()] if part)
+    status = _classify_probe_failure(combined_output)
+    return {
+        "status": status,
+        "transport": transport,
+        "detail": combined_output or f"pactl info exited with status {completed.returncode}",
+    }

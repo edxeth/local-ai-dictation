@@ -53,7 +53,7 @@
         "Confirm the output matches the documented top-level schema, issue mapping, and exit-code behavior for ok, warn, and fail states",
         "Verify default doctor mode does not trigger model load or network download while still reporting actionable readiness information"
       ],
-      "passes": false,
+      "passes": true,
       "regression_notes": ""
     },
     {

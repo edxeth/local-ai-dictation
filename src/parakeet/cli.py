@@ -10,6 +10,7 @@ from typing import Sequence
 
 from parakeet.audio import list_input_devices
 from parakeet.dictation import add_cli_arguments
+from parakeet.doctor import collect_doctor_report, doctor_exit_code, render_doctor_text
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,6 +40,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON.",
     )
     devices_parser.set_defaults(handler=_run_devices_namespace)
+
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Diagnose environment readiness for dictation.",
+        description="Diagnose environment readiness for dictation.",
+    )
+    doctor_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit machine-readable JSON.",
+    )
+    doctor_parser.set_defaults(handler=_run_doctor_namespace)
     return parser
 
 
@@ -66,6 +80,18 @@ def _run_devices_namespace(namespace: argparse.Namespace) -> int:
             f"- id={device.id} name='{device.name}' rate={device.default_sample_rate}Hz host_api={device.host_api}{default_marker}"
         )
     return 0
+
+
+
+def _run_doctor_namespace(namespace: argparse.Namespace) -> int:
+    report = collect_doctor_report()
+
+    if namespace.json_output:
+        print(json.dumps(asdict(report)))
+    else:
+        print(render_doctor_text(report))
+
+    return doctor_exit_code(report)
 
 
 def run_dictation_argv(argv: Sequence[str] | None = None) -> int:
