@@ -109,6 +109,8 @@ class DictationBridgeController:
         self._torch_module: Any | None = None
         self._model: Any | None = None
         self._model_loaded = False
+        self._model_loading = False
+        self._warmup_thread: threading.Thread | None = None
         self._diagnostic_stream = _DiagnosticStream(self)
 
     def _append_diagnostic(self, text: str) -> None:
@@ -163,6 +165,29 @@ class DictationBridgeController:
         )
         self._model = model
         self._model_loaded = True
+
+    def _warmup_worker(self) -> None:
+        try:
+            config = self._config()
+            self._ensure_runtime_loaded()
+            if self._shutdown_requested.is_set():
+                return
+            self._ensure_model_loaded(config)
+        except Exception as exc:  # pragma: no cover - defensive warmup guard
+            with self._lock:
+                self._last_error = str(exc)
+        finally:
+            with self._lock:
+                self._model_loading = False
+
+    def start_model_warmup(self) -> None:
+        with self._lock:
+            if self._model_loaded or self._model_loading:
+                return
+            self._model_loading = True
+            self._last_error = None
+            self._warmup_thread = threading.Thread(target=self._warmup_worker, daemon=True)
+            self._warmup_thread.start()
 
     def _complete_session(self, transcription: TranscriptionResult) -> None:
         payload = json.loads(render_transcription(transcription, "json"))
@@ -286,6 +311,8 @@ class DictationBridgeController:
         with self._lock:
             if self._state in {"starting", "recording", "transcribing"}:
                 raise BridgeStateError(f"Cannot start while session is {self._state}")
+            if self._model_loading and not self._model_loaded:
+                raise BridgeStateError("Model is still loading")
             if self._session_thread is not None and self._session_thread.is_alive():
                 raise BridgeStateError("Cannot start while the previous session is still winding down")
             self._stop_requested.clear()
@@ -333,6 +360,7 @@ class DictationBridgeController:
                 "bridge": {
                     "backend": "parakeet-dictation-bridge",
                     "model_loaded": self._model_loaded,
+                    "model_loading": self._model_loading,
                 },
                 "session": self.get_session_payload(),
             }
@@ -347,6 +375,7 @@ class DictationBridgeController:
                 "last_transcript": self._last_transcript,
                 "last_error": self._last_error,
                 "model_loaded": self._model_loaded,
+                "model_loading": self._model_loading,
                 "history": list(self._history),
                 "config": {
                     "cpu": self.cpu,
@@ -460,6 +489,7 @@ def run_bridge_server(namespace: Any) -> int:
     host = str(getattr(namespace, "host", "127.0.0.1"))
     port = int(getattr(namespace, "port", 8765))
     controller = build_bridge_controller_from_namespace(namespace)
+    controller.start_model_warmup()
     server = make_bridge_server(host, port, controller=controller)
 
     shutdown_requested = threading.Event()

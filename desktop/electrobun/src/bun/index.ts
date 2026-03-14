@@ -14,6 +14,7 @@ type SessionPayload = {
   } | null;
   last_error: string | null;
   model_loaded: boolean;
+  model_loading: boolean;
   history: Array<{ id: string; completed_at: number; payload: Record<string, unknown> }>;
   config: Record<string, unknown>;
   stderr_tail: string[];
@@ -55,6 +56,7 @@ const emptySession = (): SessionPayload => ({
   last_transcript: null,
   last_error: null,
   model_loaded: false,
+  model_loading: false,
   history: [],
   config: {},
   stderr_tail: [],

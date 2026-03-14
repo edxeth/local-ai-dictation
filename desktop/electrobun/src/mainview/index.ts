@@ -22,6 +22,7 @@ type SessionPayload = {
   last_transcript: TranscriptPayload | null;
   last_error: string | null;
   model_loaded: boolean;
+  model_loading: boolean;
   history: TranscriptHistoryItem[];
   config: Record<string, unknown>;
   stderr_tail: string[];
@@ -156,25 +157,28 @@ function renderState(viewState: BridgeViewState) {
   bridgeCommand.textContent = viewState.bridgeStartCommand;
   renderHistory(viewState.session.history || []);
 
-  const lockedForBusyWork = viewState.connected && ["starting", "transcribing"].includes(viewState.session.state);
-  if (viewState.session.state === "starting") {
-    setOverlay(true, "Loading model…", "Parakeet is warming up. Controls are temporarily locked until recording is ready or loading is cancelled.");
+  const lockedForBusyWork = viewState.connected && (viewState.session.model_loading || ["starting", "transcribing"].includes(viewState.session.state));
+  if (viewState.session.model_loading) {
+    setOverlay(true, "Loading model…", "The bridge is warming the model in the background. Recording will unlock automatically when it is ready.");
+  } else if (viewState.session.state === "starting") {
+    setOverlay(true, "Preparing to record…", "Recording is being prepared. Please wait a moment.");
   } else if (viewState.session.state === "transcribing") {
     setOverlay(true, "Transcribing…", "Audio has been captured. Please wait while Parakeet generates the transcript.");
   } else {
     setOverlay(false);
   }
-  toggleButton.disabled = !viewState.connected || viewState.session.state === "transcribing";
-  refreshButton.disabled = lockedForBusyWork;
+  toggleButton.disabled = !viewState.connected || viewState.session.model_loading || viewState.session.state === "transcribing";
+  refreshButton.disabled = false;
 
   if (!viewState.connected) {
     toggleButton.textContent = "Bridge offline";
     statusLine.textContent = "Start the WSL bridge command below, then use the button or hotkey.";
+  } else if (viewState.session.model_loading) {
+    toggleButton.textContent = "Loading model…";
+    statusLine.textContent = "Bridge is warming the model. Recording will unlock automatically when ready.";
   } else if (viewState.session.state === "starting") {
     toggleButton.textContent = "Cancel loading";
-    statusLine.textContent = viewState.session.model_loaded
-      ? "Preparing to record…"
-      : "Loading model. Wait until recording starts before speaking, or click again to cancel.";
+    statusLine.textContent = "Preparing to record…";
   } else if (viewState.session.state === "recording") {
     toggleButton.textContent = "Stop recording";
     statusLine.textContent = `Recording in progress since ${formatTimestamp(viewState.session.started_at)}.`;
@@ -235,5 +239,9 @@ window.addEventListener("keydown", (event) => {
     void toggleRecording();
   }
 });
+
+setInterval(() => {
+  void refreshState();
+}, 1000);
 
 void refreshState();
