@@ -294,6 +294,7 @@ async function clearHistory() {
     const next = await electrobun.rpc!.request.clearHistory({});
     visibleHistoryCount = 10;
     renderState(next);
+    await refreshState();
   } catch (error) {
     errorBox.textContent = error instanceof Error ? error.message : String(error);
   } finally {
