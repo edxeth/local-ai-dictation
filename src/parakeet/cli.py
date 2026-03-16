@@ -15,6 +15,71 @@ from parakeet.dictation import add_cli_arguments
 from parakeet.doctor import collect_doctor_report, doctor_exit_code, render_doctor_text
 
 
+def add_bridge_cli_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host interface to bind the bridge to.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="TCP port to bind the bridge to.",
+    )
+    parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Force CPU inference for bridge-controlled dictation sessions.",
+    )
+    parser.add_argument(
+        "--input-device",
+        type=str,
+        default=None,
+        help="PyAudio input device index or exact device name.",
+    )
+    parser.add_argument(
+        "--vad",
+        action="store_true",
+        help="Enable VAD-driven auto-stop for bridge-controlled sessions.",
+    )
+    parser.add_argument(
+        "--max-silence-ms",
+        type=int,
+        default=1200,
+        help="Silence duration required before VAD auto-stop becomes eligible.",
+    )
+    parser.add_argument(
+        "--min-speech-ms",
+        type=int,
+        default=300,
+        help="Minimum cumulative voiced duration before VAD stop can trigger.",
+    )
+    parser.add_argument(
+        "--vad-mode",
+        type=int,
+        choices=[0, 1, 2, 3],
+        default=2,
+        help="WebRTC-VAD aggressiveness for bridge-controlled sessions.",
+    )
+    parser.add_argument(
+        "--clipboard",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable or disable clipboard copy for bridge-controlled dictation sessions.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging for the bridge-controlled dictation subprocess.",
+    )
+    parser.add_argument(
+        "--log-file",
+        default="transcriber.debug.log",
+        help="Debug log file used by the dictation subprocess.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="parakeet",
@@ -100,69 +165,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run an opt-in localhost control bridge for a desktop app.",
         description="Run an opt-in localhost control bridge for a desktop app.",
     )
-    bridge_parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Host interface to bind the bridge to.",
-    )
-    bridge_parser.add_argument(
-        "--port",
-        type=int,
-        default=8765,
-        help="TCP port to bind the bridge to.",
-    )
-    bridge_parser.add_argument(
-        "--cpu",
-        action="store_true",
-        help="Force CPU inference for bridge-controlled dictation sessions.",
-    )
-    bridge_parser.add_argument(
-        "--input-device",
-        type=str,
-        default=None,
-        help="PyAudio input device index or exact device name.",
-    )
-    bridge_parser.add_argument(
-        "--vad",
-        action="store_true",
-        help="Enable VAD-driven auto-stop for bridge-controlled sessions.",
-    )
-    bridge_parser.add_argument(
-        "--max-silence-ms",
-        type=int,
-        default=1200,
-        help="Silence duration required before VAD auto-stop becomes eligible.",
-    )
-    bridge_parser.add_argument(
-        "--min-speech-ms",
-        type=int,
-        default=300,
-        help="Minimum cumulative voiced duration before VAD stop can trigger.",
-    )
-    bridge_parser.add_argument(
-        "--vad-mode",
-        type=int,
-        choices=[0, 1, 2, 3],
-        default=2,
-        help="WebRTC-VAD aggressiveness for bridge-controlled sessions.",
-    )
-    bridge_parser.add_argument(
-        "--clipboard",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable or disable clipboard copy for bridge-controlled sessions.",
-    )
-    bridge_parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging for the bridge-controlled dictation subprocess.",
-    )
-    bridge_parser.add_argument(
-        "--log-file",
-        default="transcriber.debug.log",
-        help="Debug log file used by the dictation subprocess.",
-    )
+    add_bridge_cli_arguments(bridge_parser)
     bridge_parser.set_defaults(handler=_run_bridge_namespace)
+
+    gui_parser = subparsers.add_parser(
+        "gui",
+        aliases=["app"],
+        help="Run the Electrobun desktop GUI.",
+        description="Run the Electrobun desktop GUI.",
+    )
+    add_bridge_cli_arguments(gui_parser)
+    gui_parser.add_argument(
+        "--bridge",
+        action="store_true",
+        help="Start the bridge automatically before launching the GUI.",
+    )
+    gui_parser.set_defaults(handler=_run_gui_namespace)
+
+    full_parser = subparsers.add_parser(
+        "full",
+        help="Start the bridge and desktop GUI together.",
+        description="Start the bridge and desktop GUI together.",
+    )
+    add_bridge_cli_arguments(full_parser)
+    full_parser.set_defaults(handler=_run_full_namespace)
     return parser
 
 
@@ -215,6 +241,18 @@ def _run_benchmark_namespace(namespace: argparse.Namespace) -> int:
 
 def _run_bridge_namespace(namespace: argparse.Namespace) -> int:
     return run_bridge_server(namespace)
+
+
+def _run_gui_namespace(namespace: argparse.Namespace) -> int:
+    from parakeet.desktop import run_gui_command
+
+    return run_gui_command(namespace)
+
+
+def _run_full_namespace(namespace: argparse.Namespace) -> int:
+    from parakeet.desktop import run_full_command
+
+    return run_full_command(namespace)
 
 
 def run_dictation_argv(argv: Sequence[str] | None = None) -> int:

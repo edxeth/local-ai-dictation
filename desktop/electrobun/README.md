@@ -12,9 +12,15 @@ Small Windows desktop control surface for `parakeet bridge`.
 
 ## Startup model
 
-This app does **not** auto-start Parakeet in WSL.
+Recommended launch commands from the repo root:
 
-You explicitly run the backend bridge in WSL first:
+```bash
+parakeet gui          # GUI only, expects an already-running bridge
+parakeet gui --bridge # GUI + bridge together
+parakeet full         # alias for the combined flow
+```
+
+Equivalent manual startup still works if you want to run the backend separately:
 
 ```bash
 source .venv/bin/activate
@@ -33,6 +39,8 @@ Then launch the desktop app from this folder:
 bun install
 bun run start
 ```
+
+`parakeet gui` and `parakeet full` will automatically run `bun install` once if `node_modules/` is missing.
 
 ## Environment overrides
 

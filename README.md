@@ -89,6 +89,8 @@ Subcommands:
 - `parakeet doctor`
 - `parakeet benchmark`
 - `parakeet bridge`
+- `parakeet gui`
+- `parakeet full`
 
 ## Dictation
 
@@ -173,7 +175,16 @@ Exit codes:
 
 The repo includes an Electrobun desktop app in `desktop/electrobun/` that talks to `parakeet bridge` over localhost.
 
-Startup order:
+Recommended launch commands:
+
+```bash
+parakeet bridge              # backend only
+parakeet gui                 # GUI only, expects an already-running bridge
+parakeet gui --bridge        # GUI + auto-start bridge
+parakeet full                # alias for the same combined flow
+```
+
+Equivalent manual startup still works:
 
 1. Start the bridge in WSL:
 
@@ -189,6 +200,8 @@ bun install
 bun run start
 ```
 
+`parakeet gui` and `parakeet full` will automatically run `bun install` once if `desktop/electrobun/node_modules/` is missing.
+
 If you run the Electrobun app on Linux/WSL, install its tray/runtime dependency once:
 
 ```bash
@@ -197,7 +210,7 @@ sudo apt install -y libayatana-appindicator3-1
 
 Desktop behavior:
 - the bridge is localhost-only and opt-in
-- the desktop app does not auto-start WSL services for you
+- `parakeet gui` alone does not auto-start the bridge; use `parakeet gui --bridge` or `parakeet full` when you want one-command startup
 - the app stays locked while the bridge is warming the model
 - transcript history is in-memory for the current bridge session only
 - the app can clear the visible transcript history
