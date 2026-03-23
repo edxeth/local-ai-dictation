@@ -98,8 +98,8 @@
         "Run the repo's documented unattended verification command from WSL.",
         "Verify it packages the app, exercises the Windows GUI plus WSL bridge flow, and exits 0 with useful logs."
       ],
-      "passes": false,
-      "regression_notes": ""
+      "passes": true,
+      "regression_notes": "Verified with `.venv/bin/python -m parakeet.cli gui-package-verify --json --timeout-seconds 240`, which ran the single WSL entrypoint across packaged smoke, automation, bridge recovery, main-window, tray, and hotkey checks, produced the installer at `build/stable-win-x64/parakeet-desktop-Setup.exe`, and preserved per-check diagnostics/log bundles under `%LOCALAPPDATA%\\ParakeetDictation\\staging\\...\\verify\\<check>` for unattended debugging."
     },
     {
       "category": "documentation",

@@ -260,6 +260,22 @@ def test_gui_package_hotkey_subcommand_dispatches_to_desktop_runner(monkeypatch)
     assert calls[0].bridge_port == 40128
 
 
+def test_gui_package_verify_subcommand_dispatches_to_desktop_runner(monkeypatch):
+    calls: list[SimpleNamespace] = []
+
+    def _fake_verify(namespace):
+        calls.append(namespace)
+        return 0
+
+    monkeypatch.setattr("parakeet.desktop.run_gui_package_verify_command", _fake_verify)
+
+    assert main(["gui-package-verify", "--json", "--timeout-seconds", "25"]) == 0
+    assert len(calls) == 1
+    assert calls[0].command == "gui-package-verify"
+    assert calls[0].json_output is True
+    assert calls[0].timeout_seconds == 25
+
+
 def test_gui_bridge_flag_delegates_to_full_command(monkeypatch):
     monkeypatch.setattr("parakeet.desktop.run_full_command", lambda namespace: 7)
 
@@ -1099,6 +1115,70 @@ def test_run_gui_package_smoke_command_launches_packaged_app_and_validates_diagn
     assert popen_factory.calls[0].env["PARAKEET_GUI_AUTO_EXIT_MS"] == "900"
     assert (stage_root / "smoke" / "installer.stdout.log").read_text(encoding="utf-8") == "installer ok"
     assert (stage_root / "smoke" / "startup-diagnostics.json").exists()
+
+
+def test_run_gui_package_verify_command_runs_existing_checks(monkeypatch, capsys):
+    commands: list[list[str]] = []
+    payloads = {
+        "gui-package-smoke": {"installer_path": "/tmp/setup.exe", "windows_installer_path": "C:\\setup.exe", "windows_diagnostics_path": "C:\\smoke.json"},
+        "gui-package-automation": {"windows_diagnostics_path": "C:\\automation.json"},
+        "gui-package-bridge-recovery": {"windows_diagnostics_path": "C:\\bridge-recovery.json"},
+        "gui-package-main-window": {"windows_diagnostics_path": "C:\\main-window.json"},
+        "gui-package-tray": {"windows_diagnostics_path": "C:\\tray.json"},
+        "gui-package-hotkey": {"windows_diagnostics_path": "C:\\hotkey.json"},
+    }
+
+    monkeypatch.setattr(desktop, "repo_root", lambda: Path("/tmp/parakeet"))
+
+    def _fake_run(command, **kwargs):
+        commands.append(command)
+        subcommand = command[3]
+        assert kwargs == {
+            "cwd": Path("/tmp/parakeet"),
+            "capture_output": True,
+            "text": True,
+            "check": False,
+        }
+        return _FakeCompletedProcess(
+            returncode=0,
+            stdout=f"running {subcommand}\n{json.dumps(payloads[subcommand])}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(desktop.subprocess, "run", _fake_run)
+
+    namespace = SimpleNamespace(json_output=True, timeout_seconds=15.0)
+    assert desktop.run_gui_package_verify_command(namespace) == 0
+
+    summary = json.loads(capsys.readouterr().out)
+    assert [command[3] for command in commands] == [
+        "gui-package-smoke",
+        "gui-package-automation",
+        "gui-package-bridge-recovery",
+        "gui-package-main-window",
+        "gui-package-tray",
+        "gui-package-hotkey",
+    ]
+    assert all(command[:3] == [desktop.sys.executable, "-m", "parakeet.cli"] for command in commands)
+    assert all(command[-1] == "--json" for command in commands)
+    assert all(command[-3:-1] == ["--timeout-seconds", "15.0"] for command in commands)
+    assert summary["command"] == "gui-package-verify"
+    assert summary["installer_path"] == "/tmp/setup.exe"
+    assert summary["windows_installer_path"] == "C:\\setup.exe"
+    assert summary["checks"]["smoke"] == payloads["gui-package-smoke"]
+    assert summary["checks"]["hotkey"] == payloads["gui-package-hotkey"]
+
+
+def test_invoke_gui_e2e_action_tolerates_quit_connection_close(monkeypatch):
+    def _fake_request_gui_e2e_json(*args, **kwargs):
+        raise desktop.DesktopAppError("GUI automation request failed for /actions/quit: Remote end closed connection without response")
+
+    monkeypatch.setattr(desktop, "request_gui_e2e_json", _fake_request_gui_e2e_json)
+
+    assert desktop.invoke_gui_e2e_action(49016, "quit") == {
+        "automationAction": "quit",
+        "shutdownRequested": True,
+    }
 
 
 def test_run_gui_package_automation_command_launches_packaged_app_and_uses_localhost_hooks(monkeypatch, tmp_path: Path):

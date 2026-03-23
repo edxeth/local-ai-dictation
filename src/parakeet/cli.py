@@ -402,6 +402,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gui_package_hotkey_parser.set_defaults(handler=_run_gui_package_hotkey_namespace)
 
+    gui_package_verify_parser = subparsers.add_parser(
+        "gui-package-verify",
+        help="Run the unattended packaged Windows verification suite from WSL.",
+        description="Run the unattended packaged Windows verification suite from WSL.",
+    )
+    gui_package_verify_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit machine-readable JSON.",
+    )
+    gui_package_verify_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=240.0,
+        help="Maximum seconds to wait for each packaged Windows verification step.",
+    )
+    gui_package_verify_parser.set_defaults(handler=_run_gui_package_verify_namespace)
+
     full_parser = subparsers.add_parser(
         "full",
         help="Start the bridge and desktop GUI together.",
@@ -515,6 +534,12 @@ def _run_gui_package_hotkey_namespace(namespace: argparse.Namespace) -> int:
     from parakeet.desktop import run_gui_package_hotkey_command
 
     return run_gui_package_hotkey_command(namespace)
+
+
+def _run_gui_package_verify_namespace(namespace: argparse.Namespace) -> int:
+    from parakeet.desktop import run_gui_package_verify_command
+
+    return run_gui_package_verify_command(namespace)
 
 
 def _run_full_namespace(namespace: argparse.Namespace) -> int:

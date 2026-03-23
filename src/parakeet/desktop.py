@@ -623,11 +623,141 @@ def invoke_gui_e2e_action(
     *,
     timeout_seconds: float = DEFAULT_GUI_E2E_ACTION_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    payload = request_gui_e2e_json(port, f"/actions/{action}", method="POST", payload={}, timeout_seconds=timeout_seconds)
+    try:
+        payload = request_gui_e2e_json(port, f"/actions/{action}", method="POST", payload={}, timeout_seconds=timeout_seconds)
+    except DesktopAppError as error:
+        if action in {"quit", "tray/quit"} and "Remote end closed connection without response" in str(error):
+            return {"automationAction": action, "shutdownRequested": True}
+        raise
     state = payload.get("state")
     if not isinstance(state, dict):
         raise DesktopAppError(f"GUI automation action `{action}` did not return state.")
     return state
+
+
+def _tail_output(text: str, *, max_lines: int = 40) -> str:
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    if not lines:
+        return "(empty)"
+    tail = lines[-max_lines:]
+    prefix = "...\n" if len(lines) > max_lines else ""
+    return prefix + "\n".join(tail)
+
+
+def _decode_last_json_object(text: str, *, command: list[str]) -> dict[str, Any]:
+    for line in reversed(text.splitlines()):
+        candidate = line.strip()
+        if not candidate:
+            continue
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    raise DesktopAppError(
+        f"Verification command {command!r} did not emit a JSON object. Stdout tail:\n{_tail_output(text)}"
+    )
+
+
+def run_repo_cli_json(command_args: list[str]) -> dict[str, Any]:
+    command = [sys.executable, "-m", "parakeet.cli", *command_args, "--json"]
+    completed = subprocess.run(
+        command,
+        cwd=repo_root(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise DesktopAppError(
+            f"Verification command {command!r} failed with exit code {completed.returncode}. "
+            f"Stdout tail:\n{_tail_output(completed.stdout)}\nStderr tail:\n{_tail_output(completed.stderr)}"
+        )
+    return _decode_last_json_object(completed.stdout, command=command)
+
+
+def preserve_verification_artifacts(name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    smoke_dir_value = payload.get("smoke_dir")
+    stage_root_value = payload.get("stage_root")
+    if not isinstance(smoke_dir_value, str) or not isinstance(stage_root_value, str):
+        return payload
+
+    smoke_dir = Path(smoke_dir_value)
+    stage_root = Path(stage_root_value)
+    if not smoke_dir.exists() or not stage_root.exists():
+        return payload
+
+    verify_dir = stage_root / "verify" / name
+    if verify_dir.exists():
+        shutil.rmtree(verify_dir)
+    verify_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(smoke_dir, verify_dir)
+
+    copied_payload = dict(payload)
+    path_keys = [
+        ("smoke_dir", "windows_smoke_dir"),
+        ("diagnostics_path", "windows_diagnostics_path"),
+        ("log_path", "windows_log_path"),
+        ("installer_stdout_path", None),
+        ("installer_stderr_path", None),
+        ("launcher_stdout_path", None),
+        ("launcher_stderr_path", None),
+        ("bridge_stdout_path", None),
+        ("bridge_stderr_path", None),
+    ]
+    for path_key, windows_key in path_keys:
+        value = copied_payload.get(path_key)
+        if not isinstance(value, str):
+            continue
+        source_path = Path(value)
+        if source_path == smoke_dir:
+            copied_path = verify_dir
+        elif smoke_dir in source_path.parents:
+            copied_path = verify_dir / source_path.relative_to(smoke_dir)
+        else:
+            continue
+        copied_payload[path_key] = str(copied_path)
+        if windows_key is not None:
+            copied_payload[windows_key] = windows_path_from_wsl(copied_path)
+
+    copied_payload["verify_dir"] = str(verify_dir)
+    copied_payload["windows_verify_dir"] = windows_path_from_wsl(verify_dir)
+    return copied_payload
+
+
+def run_gui_package_verify_command(namespace: Any) -> int:
+    timeout_seconds = float(getattr(namespace, "timeout_seconds", 240.0))
+    check_commands = [
+        ("smoke", ["gui-package-smoke", "--timeout-seconds", str(timeout_seconds)]),
+        ("automation", ["gui-package-automation", "--timeout-seconds", str(timeout_seconds)]),
+        ("bridge_recovery", ["gui-package-bridge-recovery", "--timeout-seconds", str(timeout_seconds)]),
+        ("main_window", ["gui-package-main-window", "--timeout-seconds", str(timeout_seconds)]),
+        ("tray", ["gui-package-tray", "--timeout-seconds", str(timeout_seconds)]),
+        ("hotkey", ["gui-package-hotkey", "--timeout-seconds", str(timeout_seconds)]),
+    ]
+    checks: dict[str, dict[str, Any]] = {}
+    for name, command_args in check_commands:
+        checks[name] = preserve_verification_artifacts(name, run_repo_cli_json(command_args))
+
+    smoke_payload = checks["smoke"]
+    payload = {
+        "command": "gui-package-verify",
+        "timeout_seconds": timeout_seconds,
+        "installer_path": smoke_payload.get("installer_path"),
+        "windows_installer_path": smoke_payload.get("windows_installer_path"),
+        "checks": checks,
+    }
+
+    if bool(getattr(namespace, "json_output", False)):
+        print(json.dumps(payload))
+        return 0
+
+    print("Packaged Windows verification suite passed.")
+    for name, result in checks.items():
+        diagnostics_path = result.get("windows_diagnostics_path") or result.get("windows_log_path") or result.get("windows_smoke_dir")
+        print(f"- {name}: {diagnostics_path}")
+    return 0
 
 
 def run_gui_package_automation_command(namespace: Any) -> int:
