@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,8 +9,10 @@ import parakeet.desktop as desktop
 
 
 class _FakeCompletedProcess:
-    def __init__(self, returncode: int = 0):
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = ""):
         self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 class _FakePopen:
@@ -38,6 +41,12 @@ class _FakePopen:
     def kill(self):
         self.kill_calls += 1
         self.returncode = -9
+
+    def communicate(self, timeout=None):
+        self.wait_timeouts.append(timeout)
+        if self.returncode is None:
+            self.returncode = 0
+        return "", ""
 
 
 class _PopenFactory:
@@ -95,6 +104,23 @@ def test_gui_package_subcommand_dispatches_to_desktop_packager(monkeypatch):
     assert len(calls) == 1
     assert calls[0].command == "gui-package"
     assert calls[0].json_output is True
+
+
+def test_gui_package_smoke_subcommand_dispatches_to_desktop_smoke_runner(monkeypatch):
+    calls: list[SimpleNamespace] = []
+
+    def _fake_smoke(namespace):
+        calls.append(namespace)
+        return 0
+
+    monkeypatch.setattr("parakeet.desktop.run_gui_package_smoke_command", _fake_smoke)
+
+    assert main(["gui-package-smoke", "--json", "--timeout-seconds", "12", "--auto-exit-ms", "900"]) == 0
+    assert len(calls) == 1
+    assert calls[0].command == "gui-package-smoke"
+    assert calls[0].json_output is True
+    assert calls[0].timeout_seconds == 12
+    assert calls[0].auto_exit_ms == 900
 
 
 def test_gui_bridge_flag_delegates_to_full_command(monkeypatch):
@@ -200,10 +226,12 @@ def test_run_gui_package_command_stages_build_and_reports_artifacts(monkeypatch,
     def _fake_run_windows_in_dir(windows_dir: str, command_list: list[str]) -> None:
         commands.append((windows_dir, command_list))
         build_dir.mkdir(parents=True)
+        (build_dir / "parakeet-desktop" / "bin").mkdir(parents=True)
         artifacts_dir.mkdir(parents=True)
+        (build_dir / "parakeet-desktop" / "bin" / "launcher").write_text("launcher")
         (build_dir / "parakeet-desktop-Setup.exe").write_text("setup")
         (build_dir / "parakeet-desktop-Setup.tar.zst").write_text("archive")
-        (build_dir / "parakeet-desktop-Setup.metadata.json").write_text("{}")
+        (build_dir / "parakeet-desktop-Setup.metadata.json").write_text('{"identifier":"parakeet.desktop.local","channel":"stable","name":"parakeet-desktop"}')
         (artifacts_dir / "stable-win-x64-parakeet-desktop-Setup.zip").write_text("zip")
 
     monkeypatch.setattr(desktop, "run_windows_in_dir", _fake_run_windows_in_dir)
@@ -214,3 +242,84 @@ def test_run_gui_package_command_stages_build_and_reports_artifacts(monkeypatch,
         "C:\\stage\\electrobun",
         ["bun install", "bunx electrobun build --env=stable"],
     )]
+
+
+def test_run_gui_package_smoke_command_launches_packaged_app_and_validates_diagnostics(monkeypatch, tmp_path: Path):
+    stage_root = tmp_path / "stage-root"
+    stage_root.mkdir(parents=True)
+    installed_root = tmp_path / "installed" / "stable"
+    launcher_path = installed_root / "app" / "bin" / "launcher.exe"
+    launcher_path.parent.mkdir(parents=True)
+    launcher_path.write_text("launcher")
+    diagnostics_path = installed_root / "logs" / "startup-diagnostics.json"
+    diagnostics_path.parent.mkdir(parents=True)
+    log_path = installed_root / "logs" / "startup.log"
+
+    monkeypatch.setattr(
+        desktop,
+        "build_windows_package_payload",
+        lambda: {
+            "stage_root": str(stage_root),
+            "installer_path": str(stage_root / "parakeet-desktop-Setup.exe"),
+            "app_identifier": "parakeet.desktop.local",
+            "app_channel": "stable",
+        },
+    )
+    monkeypatch.setattr(
+        desktop,
+        "installed_windows_app_paths",
+        lambda identifier, channel: {
+            "app_root": installed_root,
+            "app_dir": installed_root / "app",
+            "launcher_path": launcher_path,
+            "logs_dir": installed_root / "logs",
+            "diagnostics_path": diagnostics_path,
+            "log_path": log_path,
+        },
+    )
+    monkeypatch.setattr(desktop, "windows_path_from_wsl", lambda path: f"C:\\stage\\{path.name}")
+    monkeypatch.setattr(desktop, "prepare_installed_windows_app_for_reinstall", lambda installed_paths: None)
+
+    installer_calls: list[tuple[Path, float]] = []
+
+    def _fake_run_wsl_windows_executable_capture(executable_path: Path, *, timeout_seconds: float, env=None, cwd=None):
+        installer_calls.append((executable_path, timeout_seconds))
+        return _FakeCompletedProcess(returncode=0, stdout="installer ok", stderr="")
+
+    monkeypatch.setattr(desktop, "run_wsl_windows_executable_capture", _fake_run_wsl_windows_executable_capture)
+
+    popen_factory = _PopenFactory()
+
+    def _fake_launch_wsl_windows_executable(executable_path: Path, *, env=None, cwd=None):
+        diagnostics_path.write_text(
+            json.dumps(
+                {
+                    "bunReady": True,
+                    "rendererReady": True,
+                    "rendererRpcReady": True,
+                    "shutdownReason": "e2e-auto-exit",
+                }
+            ),
+            encoding="utf-8",
+        )
+        log_path.write_text("renderer ready", encoding="utf-8")
+        process = popen_factory([str(executable_path)], env=env, cwd=cwd)
+        process.returncode = 0
+        return process
+
+    monkeypatch.setattr(desktop, "launch_wsl_windows_executable", _fake_launch_wsl_windows_executable)
+    monkeypatch.setattr(desktop, "request_installed_gui_shutdown", lambda installed_paths: None)
+
+    namespace = SimpleNamespace(json_output=False, timeout_seconds=12.0, auto_exit_ms=900)
+    assert desktop.run_gui_package_smoke_command(namespace) == 0
+    assert installer_calls == [(
+        stage_root / "parakeet-desktop-Setup.exe",
+        12.0,
+    )]
+    assert len(popen_factory.calls) == 1
+    assert popen_factory.calls[0].command == [str(launcher_path)]
+    assert popen_factory.calls[0].env is not None
+    assert popen_factory.calls[0].env["PARAKEET_GUI_E2E"] == "1"
+    assert popen_factory.calls[0].env["PARAKEET_GUI_AUTO_EXIT_MS"] == "900"
+    assert (stage_root / "smoke" / "installer.stdout.log").read_text(encoding="utf-8") == "installer ok"
+    assert (stage_root / "smoke" / "startup-diagnostics.json").exists()

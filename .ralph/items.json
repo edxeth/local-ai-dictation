@@ -28,8 +28,8 @@
         "Launch the packaged Windows app with E2E automation enabled.",
         "Verify the renderer and RPC layer initialize successfully and the process can be shut down cleanly with captured logs."
       ],
-      "passes": false,
-      "regression_notes": ""
+      "passes": true,
+      "regression_notes": "Verified with `.venv/bin/python -m parakeet.cli gui-package-smoke --json --timeout-seconds 120`, which staged and packaged the app, installed `parakeet-desktop-Setup.exe`, launched the installed Windows app unattended, captured startup logs plus diagnostics under `%LOCALAPPDATA%\\ParakeetDictation\\staging\\...\\smoke`, confirmed `bunReady=true`, `rendererReady=true`, and `rendererRpcReady=true`, then requested a clean window close that recorded `shutdownReason=window-close`."
     },
     {
       "category": "integration",

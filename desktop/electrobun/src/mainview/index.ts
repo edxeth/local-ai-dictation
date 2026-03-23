@@ -45,6 +45,7 @@ type DesktopRPC = {
       toggleRecording: { params: {}; response: BridgeViewState };
       clearHistory: { params: {}; response: BridgeViewState };
       showWindow: { params: {}; response: { success: true } };
+      reportRendererReady: { params: { userAgent: string }; response: { success: true } };
     };
     messages: {};
   };
@@ -412,9 +413,20 @@ window.addEventListener("keydown", (event) => {
 });
 window.addEventListener("resize", syncViewportDensity);
 
+async function bootstrap() {
+  try {
+    await electrobun.rpc!.request.reportRendererReady({
+      userAgent: navigator.userAgent,
+    });
+    await refreshState();
+  } catch (error) {
+    errorBox.textContent = error instanceof Error ? error.message : String(error);
+  }
+}
+
 syncViewportDensity();
 setInterval(() => {
   void refreshState();
 }, 1000);
 
-void refreshState();
+void bootstrap();

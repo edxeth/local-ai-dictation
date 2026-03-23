@@ -208,6 +208,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gui_package_parser.set_defaults(handler=_run_gui_package_namespace)
 
+    gui_package_smoke_parser = subparsers.add_parser(
+        "gui-package-smoke",
+        help="Package the Windows app, launch it unattended, and capture startup diagnostics.",
+        description="Package the Windows app, launch it unattended, and capture startup diagnostics.",
+    )
+    gui_package_smoke_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit machine-readable JSON.",
+    )
+    gui_package_smoke_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=30.0,
+        help="Maximum seconds to wait for the packaged Windows launcher to exit.",
+    )
+    gui_package_smoke_parser.add_argument(
+        "--auto-exit-ms",
+        type=int,
+        default=1500,
+        help="Milliseconds to wait after renderer readiness before the packaged app exits in E2E mode.",
+    )
+    gui_package_smoke_parser.set_defaults(handler=_run_gui_package_smoke_namespace)
+
     full_parser = subparsers.add_parser(
         "full",
         help="Start the bridge and desktop GUI together.",
@@ -285,6 +310,12 @@ def _run_gui_package_namespace(namespace: argparse.Namespace) -> int:
     from parakeet.desktop import run_gui_package_command
 
     return run_gui_package_command(namespace)
+
+
+def _run_gui_package_smoke_namespace(namespace: argparse.Namespace) -> int:
+    from parakeet.desktop import run_gui_package_smoke_command
+
+    return run_gui_package_smoke_command(namespace)
 
 
 def _run_full_namespace(namespace: argparse.Namespace) -> int:

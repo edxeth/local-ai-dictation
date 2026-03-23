@@ -21,6 +21,8 @@ class DesktopAppError(RuntimeError):
 
 DEFAULT_BRIDGE_HOST = "127.0.0.1"
 DEFAULT_BRIDGE_PORT = 8765
+DEFAULT_GUI_SMOKE_TIMEOUT_SECONDS = 120.0
+DEFAULT_GUI_AUTO_EXIT_MS = 1500
 
 
 def repo_root() -> Path:
@@ -93,6 +95,10 @@ def windows_path_from_wsl(path: Path) -> str:
 def windows_stage_root() -> Path:
     local_appdata = read_windows_env_var("LOCALAPPDATA")
     return wsl_path_from_windows(local_appdata) / "ParakeetDictation" / "staging"
+
+
+def windows_local_appdata_root() -> Path:
+    return wsl_path_from_windows(read_windows_env_var("LOCALAPPDATA"))
 
 
 def stage_windows_desktop_app(app_dir: Path | None = None) -> dict[str, str]:
@@ -245,7 +251,15 @@ def run_windows_in_dir(windows_dir: str, commands: list[str]) -> None:
         raise DesktopAppError(f"Windows command failed in {windows_dir}: {' && '.join(commands)}")
 
 
-def collect_windows_package_artifacts(app_dir: Path) -> dict[str, str]:
+def _read_package_metadata(metadata_path: Path) -> dict[str, Any]:
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise DesktopAppError(f"Windows package metadata at {metadata_path} is invalid.")
+    return payload
+
+
+
+def collect_windows_package_artifacts(app_dir: Path) -> dict[str, Any]:
     build_dir = app_dir / "build" / "stable-win-x64"
     if not build_dir.exists():
         raise DesktopAppError(f"Windows build output not found at {build_dir}")
@@ -266,6 +280,13 @@ def collect_windows_package_artifacts(app_dir: Path) -> dict[str, str]:
     if zip_path is None:
         raise DesktopAppError(f"Windows packaged artifact zip not found in {app_dir / 'artifacts'}")
 
+    metadata = _read_package_metadata(metadata_path)
+    identifier = str(metadata.get("identifier", ""))
+    channel = str(metadata.get("channel", "stable"))
+    app_name = str(metadata.get("name", "parakeet-desktop"))
+    if not identifier:
+        raise DesktopAppError(f"Windows installer metadata at {metadata_path} does not include an identifier.")
+
     return {
         "build_dir": str(build_dir),
         "windows_build_dir": windows_path_from_wsl(build_dir),
@@ -277,20 +298,293 @@ def collect_windows_package_artifacts(app_dir: Path) -> dict[str, str]:
         "windows_metadata_path": windows_path_from_wsl(metadata_path),
         "artifact_zip_path": str(zip_path),
         "windows_artifact_zip_path": windows_path_from_wsl(zip_path),
+        "app_identifier": identifier,
+        "app_channel": channel,
+        "app_name": app_name,
     }
 
 
-def run_gui_package_command(namespace: Any) -> int:
+def build_windows_package_payload() -> dict[str, Any]:
     ensure_windows_bun_available()
     payload = stage_windows_desktop_app()
-    windows_app_dir = payload["windows_desktop_app_dir"]
-    run_windows_in_dir(windows_app_dir, ["bun install", "bunx electrobun build --env=stable"])
+    run_windows_in_dir(payload["windows_desktop_app_dir"], ["bun install", "bunx electrobun build --env=stable"])
     payload.update(collect_windows_package_artifacts(Path(payload["desktop_app_dir"])))
+    return payload
+
+
+def run_gui_package_command(namespace: Any) -> int:
+    payload = build_windows_package_payload()
     if bool(getattr(namespace, "json_output", False)):
         print(json.dumps(payload))
         return 0
     print(f"Packaged Windows desktop app at {payload['installer_path']}")
     print(payload["windows_installer_path"])
+    return 0
+
+
+def run_wsl_windows_executable_capture(
+    executable_path: Path,
+    *,
+    timeout_seconds: float,
+    env: dict[str, str] | None = None,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    return subprocess.run(
+        [str(executable_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout_seconds,
+        env=merged_env,
+        cwd=None if cwd is None else str(cwd),
+    )
+
+
+def launch_wsl_windows_executable(
+    executable_path: Path,
+    *,
+    env: dict[str, str] | None = None,
+    cwd: Path | None = None,
+) -> subprocess.Popen[str]:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    return subprocess.Popen(
+        [str(executable_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=merged_env,
+        cwd=None if cwd is None else str(cwd),
+    )
+
+
+def read_json_file(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def installed_windows_app_paths(identifier: str, channel: str) -> dict[str, Path]:
+    app_root = windows_local_appdata_root() / identifier / channel
+    logs_dir = app_root / "logs"
+    app_dir = app_root / "app"
+    return {
+        "app_root": app_root,
+        "app_dir": app_dir,
+        "launcher_path": app_dir / "bin" / "launcher.exe",
+        "logs_dir": logs_dir,
+        "diagnostics_path": logs_dir / "startup-diagnostics.json",
+        "log_path": logs_dir / "startup.log",
+    }
+
+
+def build_gui_smoke_paths(stage_root: Path) -> dict[str, Path]:
+    smoke_dir = stage_root / "smoke"
+    if smoke_dir.exists():
+        shutil.rmtree(smoke_dir)
+    smoke_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "smoke_dir": smoke_dir,
+        "diagnostics_path": smoke_dir / "startup-diagnostics.json",
+        "log_path": smoke_dir / "startup.log",
+        "installer_stdout_path": smoke_dir / "installer.stdout.log",
+        "installer_stderr_path": smoke_dir / "installer.stderr.log",
+        "launcher_stdout_path": smoke_dir / "launcher.stdout.log",
+        "launcher_stderr_path": smoke_dir / "launcher.stderr.log",
+    }
+
+
+def clear_existing_gui_startup_logs(installed_paths: dict[str, Path]) -> None:
+    for key in ("diagnostics_path", "log_path"):
+        path = installed_paths[key]
+        if path.exists():
+            path.unlink()
+
+
+def _powershell_quote(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def prepare_installed_windows_app_for_reinstall(installed_paths: dict[str, Path]) -> None:
+    app_root = installed_paths["app_root"]
+    powershell_path = find_windows_powershell()
+    if powershell_path is not None:
+        windows_app_root = windows_path_from_wsl(app_root)
+        subprocess.run(
+            [
+                powershell_path,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "; ".join(
+                    [
+                        "$ErrorActionPreference = 'SilentlyContinue'",
+                        f"$root = '{_powershell_quote(windows_app_root)}'",
+                        "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+                    ]
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    for path in (installed_paths["app_dir"], app_root / "self-extraction"):
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def wait_for_startup_readiness(path: Path, *, timeout_seconds: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_payload: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        if path.exists():
+            try:
+                payload = read_json_file(path)
+            except json.JSONDecodeError:
+                time.sleep(0.25)
+                continue
+            last_payload = payload
+            if payload.get("bunReady") and payload.get("rendererReady") and payload.get("rendererRpcReady"):
+                return payload
+        time.sleep(0.25)
+    if last_payload is not None:
+        raise DesktopAppError(f"Packaged Windows app wrote incomplete startup diagnostics: {json.dumps(last_payload)}")
+    raise DesktopAppError(f"Packaged Windows app did not write startup diagnostics to {path} within {timeout_seconds} seconds.")
+
+
+def request_installed_gui_shutdown(installed_paths: dict[str, Path]) -> None:
+    powershell_path = find_windows_powershell()
+    if powershell_path is None:
+        raise DesktopAppError("Packaged Windows app shutdown requires powershell.exe to locate the installed GUI process.")
+    windows_app_root = windows_path_from_wsl(installed_paths["app_root"])
+    completed = subprocess.run(
+        [
+            powershell_path,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "; ".join(
+                [
+                    "$ErrorActionPreference = 'SilentlyContinue'",
+                    f"$root = '{_powershell_quote(windows_app_root)}'",
+                    "$targets = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) }",
+                    "$targets | ForEach-Object { $proc = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; if ($proc -and $proc.MainWindowHandle -ne 0) { $proc.CloseMainWindow() | Out-Null } }",
+                ]
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip()
+        raise DesktopAppError(stderr or "Failed to request a clean shutdown for the packaged Windows app.")
+
+
+def wait_for_shutdown_reason(path: Path, *, timeout_seconds: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_payload: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        if path.exists():
+            try:
+                payload = read_json_file(path)
+            except json.JSONDecodeError:
+                time.sleep(0.25)
+                continue
+            last_payload = payload
+            if payload.get("shutdownReason"):
+                return payload
+        time.sleep(0.25)
+    if last_payload is not None:
+        raise DesktopAppError(f"Packaged Windows app did not record a shutdown reason: {json.dumps(last_payload)}")
+    raise DesktopAppError(f"Packaged Windows app did not update shutdown diagnostics at {path} within {timeout_seconds} seconds.")
+
+
+def run_gui_package_smoke_command(namespace: Any) -> int:
+    payload = build_windows_package_payload()
+    stage_root = Path(payload["stage_root"])
+    smoke_paths = build_gui_smoke_paths(stage_root)
+    timeout_seconds = float(getattr(namespace, "timeout_seconds", DEFAULT_GUI_SMOKE_TIMEOUT_SECONDS))
+    auto_exit_ms = int(getattr(namespace, "auto_exit_ms", DEFAULT_GUI_AUTO_EXIT_MS))
+
+    installed_paths = installed_windows_app_paths(str(payload["app_identifier"]), str(payload["app_channel"]))
+    prepare_installed_windows_app_for_reinstall(installed_paths)
+    clear_existing_gui_startup_logs(installed_paths)
+
+    installer_completed = run_wsl_windows_executable_capture(
+        Path(payload["installer_path"]),
+        timeout_seconds=timeout_seconds,
+    )
+    smoke_paths["installer_stdout_path"].write_text(installer_completed.stdout, encoding="utf-8")
+    smoke_paths["installer_stderr_path"].write_text(installer_completed.stderr, encoding="utf-8")
+    if installer_completed.returncode != 0:
+        raise DesktopAppError(
+            f"Packaged Windows installer exited with code {installer_completed.returncode}. See {smoke_paths['installer_stdout_path']} and {smoke_paths['installer_stderr_path']}."
+        )
+    if not installed_paths["launcher_path"].exists():
+        raise DesktopAppError(f"Installed Windows launcher not found at {installed_paths['launcher_path']}")
+
+    launcher_process = launch_wsl_windows_executable(
+        installed_paths["launcher_path"],
+        env={
+            "PARAKEET_GUI_E2E": "1",
+            "PARAKEET_GUI_AUTO_EXIT_MS": str(auto_exit_ms),
+        },
+    )
+    try:
+        wait_for_startup_readiness(installed_paths["diagnostics_path"], timeout_seconds=timeout_seconds)
+        request_installed_gui_shutdown(installed_paths)
+        diagnostics = wait_for_shutdown_reason(installed_paths["diagnostics_path"], timeout_seconds=10.0)
+    finally:
+        if launcher_process.poll() is None:
+            try:
+                launcher_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                launcher_process.terminate()
+                try:
+                    launcher_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    launcher_process.kill()
+                    launcher_process.wait(timeout=5)
+
+    launcher_stdout, launcher_stderr = launcher_process.communicate()
+    smoke_paths["launcher_stdout_path"].write_text(launcher_stdout, encoding="utf-8")
+    smoke_paths["launcher_stderr_path"].write_text(launcher_stderr, encoding="utf-8")
+
+    if installed_paths["log_path"].exists():
+        shutil.copy2(installed_paths["log_path"], smoke_paths["log_path"])
+    if installed_paths["diagnostics_path"].exists():
+        shutil.copy2(installed_paths["diagnostics_path"], smoke_paths["diagnostics_path"])
+
+    payload.update(
+        {
+            "smoke_dir": str(smoke_paths["smoke_dir"]),
+            "windows_smoke_dir": windows_path_from_wsl(smoke_paths["smoke_dir"]),
+            "diagnostics_path": str(smoke_paths["diagnostics_path"]),
+            "windows_diagnostics_path": windows_path_from_wsl(smoke_paths["diagnostics_path"]),
+            "log_path": str(smoke_paths["log_path"]),
+            "windows_log_path": windows_path_from_wsl(smoke_paths["log_path"]),
+            "installer_stdout_path": str(smoke_paths["installer_stdout_path"]),
+            "installer_stderr_path": str(smoke_paths["installer_stderr_path"]),
+            "launcher_stdout_path": str(smoke_paths["launcher_stdout_path"]),
+            "launcher_stderr_path": str(smoke_paths["launcher_stderr_path"]),
+            "installed_launcher_path": str(installed_paths["launcher_path"]),
+            "windows_installed_launcher_path": windows_path_from_wsl(installed_paths["launcher_path"]),
+            "launcher_exit_code": launcher_process.returncode,
+            "startup_diagnostics": diagnostics,
+        }
+    )
+
+    if bool(getattr(namespace, "json_output", False)):
+        print(json.dumps(payload))
+        return 0
+
+    print(f"Packaged Windows desktop app smoke check passed with diagnostics at {payload['diagnostics_path']}")
+    print(payload["windows_diagnostics_path"])
     return 0
 
 
