@@ -51,6 +51,8 @@ type RendererAutomationSnapshot = {
   historyTexts: string[];
 };
 
+type RendererAutomationActionId = "toggle-recording";
+
 type DesktopRPC = {
   bun: {
     requests: {
@@ -67,6 +69,7 @@ type DesktopRPC = {
   webview: {
     requests: {
       getAutomationSnapshot: { params: {}; response: RendererAutomationSnapshot };
+      runAutomationAction: { params: { action: RendererAutomationActionId }; response: RendererAutomationSnapshot };
     };
     messages: {};
   };
@@ -77,6 +80,13 @@ const rpc = Electroview.defineRPC<DesktopRPC>({
   handlers: {
     requests: {
       getAutomationSnapshot: async () => buildRendererAutomationSnapshot(currentState),
+      runAutomationAction: async ({ action }) => {
+        switch (action) {
+          case "toggle-recording":
+            await toggleRecording();
+            return buildRendererAutomationSnapshot(currentState);
+        }
+      },
     },
     messages: {},
   },

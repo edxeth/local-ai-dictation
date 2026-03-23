@@ -50,6 +50,8 @@ type RendererAutomationSnapshot = {
   historyTexts: string[];
 };
 
+type RendererAutomationActionId = "toggle-recording";
+
 type StartupDiagnostics = {
   bridgeUrl: string;
   hotkey: string;
@@ -75,6 +77,7 @@ type StartupDiagnostics = {
 
 type AutomationActionId =
   | "show-window"
+  | "window/toggle-recording"
   | "start-recording"
   | "stop-recording"
   | "toggle-recording"
@@ -122,6 +125,7 @@ type DesktopRPC = {
   webview: RPCSchema<{
     requests: {
       getAutomationSnapshot: { params: {}; response: RendererAutomationSnapshot };
+      runAutomationAction: { params: { action: RendererAutomationActionId }; response: RendererAutomationSnapshot };
     };
     messages: {};
   }>;
@@ -273,6 +277,7 @@ function jsonResponse(payload: unknown, status = 200): Response {
 function isAutomationAction(value: string): value is AutomationActionId {
   return [
     "show-window",
+    "window/toggle-recording",
     "start-recording",
     "stop-recording",
     "toggle-recording",
@@ -295,6 +300,13 @@ async function readRendererAutomationSnapshot(): Promise<RendererAutomationSnaps
     appendGuiLog("WARN", `Failed to read renderer automation snapshot: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
+}
+
+async function runRendererAutomationAction(action: RendererAutomationActionId): Promise<RendererAutomationSnapshot> {
+  if (!startupDiagnostics.rendererRpcReady || !mainWindow?.webview.rpc) {
+    throw new Error("Renderer automation is not ready yet");
+  }
+  return await mainWindow.webview.rpc.request.runAutomationAction({ action });
 }
 
 async function readAutomationState(): Promise<AutomationState> {
@@ -470,6 +482,9 @@ async function runAutomationAction(action: AutomationActionId): Promise<Automati
     case "show-window":
     case "tray/open":
       showMainWindow();
+      break;
+    case "window/toggle-recording":
+      await runRendererAutomationAction("toggle-recording");
       break;
     case "start-recording":
       await fetchBridgeJson("/session/start", { method: "POST", body: "{}" });

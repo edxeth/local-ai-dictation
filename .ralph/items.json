@@ -68,8 +68,8 @@
         "Use the primary GUI control to start a session against the WSL bridge in deterministic E2E mode.",
         "Use the GUI to stop the session and verify the deterministic transcript appears in visible history."
       ],
-      "passes": false,
-      "regression_notes": ""
+      "passes": true,
+      "regression_notes": "Verified with `.venv/bin/python -m parakeet.cli gui-package-main-window --json --timeout-seconds 120`, which packaged and installed the Windows app, launched it against the real deterministic WSL bridge, drove the renderer's primary toggle control through the localhost E2E surface, observed `recording` then `idle` state transitions, and confirmed the visible history contained `main window deterministic transcript` before quitting cleanly with `shutdownReason=automation:quit`."
     },
     {
       "category": "integration",
