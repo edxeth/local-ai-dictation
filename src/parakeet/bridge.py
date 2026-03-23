@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 import signal
 import sys
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs, urlparse
 
 from parakeet.audio import list_input_devices
@@ -26,6 +27,7 @@ from parakeet.types import DictationConfig, TranscriptionResult
 
 
 BRIDGE_SCHEMA_VERSION = 1
+DEFAULT_E2E_TRANSCRIPT = "Parakeet deterministic E2E transcript"
 
 
 class BridgeStateError(RuntimeError):
@@ -69,6 +71,10 @@ class DictationBridgeController:
         clipboard: bool = True,
         transcript_timeout: float = 300.0,
         stderr_tail_limit: int = 200,
+        e2e_mode: bool = False,
+        e2e_transcript: str = DEFAULT_E2E_TRANSCRIPT,
+        e2e_start_delay_ms: int = 0,
+        e2e_stop_delay_ms: int = 0,
         runtime_loader: Callable[[bool], tuple[Any, Any, Any, Any]] = _load_runtime_dependencies,
         model_loader: Callable[..., tuple[Any, bool, float, float]] = _load_model,
         recorder: Callable[..., bytes | None] = record_audio_interruptible,
@@ -85,6 +91,10 @@ class DictationBridgeController:
         self.clipboard = clipboard
         self._transcript_timeout = transcript_timeout
         self._stderr_tail_limit = stderr_tail_limit
+        self._e2e_mode = e2e_mode
+        self._e2e_transcript = e2e_transcript
+        self._e2e_start_delay_ms = max(0, e2e_start_delay_ms)
+        self._e2e_stop_delay_ms = max(0, e2e_stop_delay_ms)
         self._runtime_loader = runtime_loader
         self._model_loader = model_loader
         self._recorder = recorder
@@ -109,10 +119,13 @@ class DictationBridgeController:
         self._pyperclip_module: Any | None = None
         self._torch_module: Any | None = None
         self._model: Any | None = None
-        self._model_loaded = False
+        self._model_loaded = self._e2e_mode
         self._model_loading = False
         self._warmup_thread: threading.Thread | None = None
         self._diagnostic_stream = _DiagnosticStream(self)
+
+        if self._e2e_mode:
+            self._append_diagnostic("Deterministic E2E bridge mode enabled")
 
     def _append_diagnostic(self, text: str) -> None:
         should_echo = False
@@ -147,7 +160,7 @@ class DictationBridgeController:
         )
 
     def _ensure_runtime_loaded(self) -> None:
-        if self._runtime_ready.is_set():
+        if self._e2e_mode or self._runtime_ready.is_set():
             return
         self._append_diagnostic("Starting...")
         nemo_asr, pyaudio_module, pyperclip_module, torch_module = self._runtime_loader(self.debug)
@@ -158,7 +171,7 @@ class DictationBridgeController:
         self._runtime_ready.set()
 
     def _ensure_model_loaded(self, config: DictationConfig) -> None:
-        if self._model_loaded:
+        if self._e2e_mode or self._model_loaded:
             return
         if self._nemo_asr is None or self._torch_module is None:
             raise RuntimeError("Bridge runtime dependencies are not loaded")
@@ -187,7 +200,7 @@ class DictationBridgeController:
 
     def start_model_warmup(self) -> None:
         with self._lock:
-            if self._model_loaded or self._model_loading:
+            if self._e2e_mode or self._model_loaded or self._model_loading:
                 return
             self._model_loading = True
             self._last_error = None
@@ -231,10 +244,61 @@ class DictationBridgeController:
         if warning is not None:
             self._append_diagnostic(f"Clipboard warning: {warning}")
 
+    def _wait_for_e2e_delay(self, delay_ms: int) -> bool:
+        if delay_ms <= 0:
+            return not (self._stop_requested.is_set() or self._shutdown_requested.is_set())
+        deadline = time.monotonic() + (delay_ms / 1000.0)
+        while time.monotonic() < deadline:
+            if self._stop_requested.is_set() or self._shutdown_requested.is_set():
+                return False
+            time.sleep(0.01)
+        return not (self._stop_requested.is_set() or self._shutdown_requested.is_set())
+
+    def _run_e2e_session(self) -> None:
+        if not self._wait_for_e2e_delay(self._e2e_start_delay_ms):
+            self._complete_cancelled_before_recording()
+            return
+
+        self._append_diagnostic("🎤 Recording...")
+        with self._lock:
+            self._state = "recording"
+
+        while not self._stop_requested.is_set() and not self._shutdown_requested.is_set():
+            time.sleep(0.01)
+
+        if self._shutdown_requested.is_set():
+            with self._lock:
+                self._state = "stopped"
+                self._started_at = None
+            return
+
+        with self._lock:
+            self._state = "transcribing"
+        self._append_diagnostic("🤖 Generating...")
+
+        if not self._wait_for_e2e_delay(self._e2e_stop_delay_ms):
+            if self._shutdown_requested.is_set():
+                with self._lock:
+                    self._state = "stopped"
+                    self._started_at = None
+                return
+
+        self._complete_session(
+            TranscriptionResult(
+                text=self._e2e_transcript,
+                device="e2e",
+                metadata={"e2e_mode": True},
+            )
+        )
+
     def _session_worker(self) -> None:
         config = self._config()
         temp_path: str | None = None
         try:
+            if self._e2e_mode:
+                self._run_e2e_session()
+                return
+
             self._ensure_runtime_loaded()
             if self._stop_requested.is_set() or self._shutdown_requested.is_set():
                 self._complete_cancelled_before_recording()
@@ -373,6 +437,7 @@ class DictationBridgeController:
                     "backend": "parakeet-dictation-bridge",
                     "model_loaded": self._model_loaded,
                     "model_loading": self._model_loading,
+                    "e2e_mode": self._e2e_mode,
                 },
                 "session": self.get_session_payload(),
             }
@@ -476,6 +541,20 @@ def _truthy_query(values: list[str] | None) -> bool:
     return values[0].strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_truthy(name: str, env: Mapping[str, str]) -> bool:
+    value = env.get(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, env: Mapping[str, str], default: int) -> int:
+    value = env.get(name)
+    if value is None or not value.strip():
+        return default
+    return int(value)
+
+
 def make_bridge_server(
     host: str,
     port: int,
@@ -486,7 +565,12 @@ def make_bridge_server(
     return ThreadingHTTPServer((host, port), handler)
 
 
-def build_bridge_controller_from_namespace(namespace: Any) -> DictationBridgeController:
+def build_bridge_controller_from_namespace(
+    namespace: Any,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> DictationBridgeController:
+    source_env = os.environ if env is None else env
     return DictationBridgeController(
         cpu=bool(getattr(namespace, "cpu", False)),
         input_device=getattr(namespace, "input_device", None),
@@ -497,6 +581,10 @@ def build_bridge_controller_from_namespace(namespace: Any) -> DictationBridgeCon
         debug=bool(getattr(namespace, "debug", False)),
         log_file=str(getattr(namespace, "log_file", "transcriber.debug.log")),
         clipboard=bool(getattr(namespace, "clipboard", True)),
+        e2e_mode=_env_truthy("PARAKEET_E2E_MODE", source_env),
+        e2e_transcript=source_env.get("PARAKEET_E2E_TRANSCRIPT", DEFAULT_E2E_TRANSCRIPT),
+        e2e_start_delay_ms=_env_int("PARAKEET_E2E_START_DELAY_MS", source_env, 0),
+        e2e_stop_delay_ms=_env_int("PARAKEET_E2E_STOP_DELAY_MS", source_env, 0),
     )
 
 

@@ -38,8 +38,8 @@
         "Start `parakeet bridge` in WSL with E2E env vars enabled.",
         "Call the existing bridge session endpoints and verify deterministic transcript, state, and history payloads."
       ],
-      "passes": false,
-      "regression_notes": ""
+      "passes": true,
+      "regression_notes": "Verified with `.venv/bin/python -m pytest -q tests/test_bridge.py -k 'e2e or build_bridge_controller_from_namespace_reads_e2e_env'`, which launches the real CLI bridge process under `PARAKEET_E2E_MODE=1` and checks deterministic `/health`, `/session/start`, `/session/stop`, `/session/toggle`, and `/session/clear-history` behavior. Also verified directly from WSL by starting `.venv/bin/python -u -m parakeet.cli bridge --host 127.0.0.1 --port 40124` with `PARAKEET_E2E_*` env vars and asserting deterministic transcript, recording state, and history payloads over HTTP without microphone/model access."
     },
     {
       "category": "integration",

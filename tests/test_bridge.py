@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 from pathlib import Path
+import socket
+import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 import sys
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +57,40 @@ def _transcriber(config, model, audio_data, sample_rate, *, status_stream=None):
     if status_stream is not None:
         status_stream.write("🤖 Generating...\n")
     return TranscriptionResult(text="fake transcript", device="cpu"), "/tmp/fake.wav", 0.0, 0.0
+
+
+def _reserve_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _post_json(url: str) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=b"{}",
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=3) as response:
+        return json.load(response)
+
+
+def _wait_for_json(url: str, predicate, *, timeout: float = 3.0) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last_payload: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                payload = json.load(response)
+        except (urllib.error.URLError, OSError, json.JSONDecodeError):
+            time.sleep(0.02)
+            continue
+        last_payload = payload
+        if predicate(payload):
+            return payload
+        time.sleep(0.02)
+    raise AssertionError(f"Timed out waiting for expected payload from {url}: {last_payload}")
 
 
 def test_bridge_start_rejects_double_start():
@@ -170,3 +209,97 @@ def test_bridge_server_health_and_session_endpoints():
         server.server_close()
         controller.shutdown()
         thread.join(timeout=1)
+
+
+def test_build_bridge_controller_from_namespace_reads_e2e_env():
+    namespace = type("Namespace", (), {"cpu": False, "clipboard": True})()
+
+    controller = bridge_module.build_bridge_controller_from_namespace(
+        namespace,
+        env={
+            "PARAKEET_E2E_MODE": "1",
+            "PARAKEET_E2E_TRANSCRIPT": "scripted transcript",
+            "PARAKEET_E2E_START_DELAY_MS": "25",
+            "PARAKEET_E2E_STOP_DELAY_MS": "35",
+        },
+    )
+
+    payload = controller.health_payload()
+    assert payload["bridge"]["e2e_mode"] is True
+    assert payload["bridge"]["model_loaded"] is True
+    assert payload["session"]["model_loading"] is False
+    controller.shutdown()
+
+
+def test_bridge_cli_e2e_mode_exposes_deterministic_session_flow():
+    port = _reserve_local_port()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC)
+    env["PARAKEET_E2E_MODE"] = "1"
+    env["PARAKEET_E2E_TRANSCRIPT"] = "deterministic transcript"
+    env["PARAKEET_E2E_START_DELAY_MS"] = "30"
+    env["PARAKEET_E2E_STOP_DELAY_MS"] = "40"
+
+    process = subprocess.Popen(
+        [sys.executable, "-m", "parakeet.cli", "bridge", "--host", "127.0.0.1", "--port", str(port)],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    try:
+        health = _wait_for_json(
+            f"http://127.0.0.1:{port}/health",
+            lambda payload: bool(payload.get("ok")),
+            timeout=5.0,
+        )
+        assert health["bridge"]["e2e_mode"] is True
+        assert health["bridge"]["model_loaded"] is True
+        assert health["session"]["state"] == "stopped"
+
+        started = _post_json(f"http://127.0.0.1:{port}/session/start")
+        assert started["state"] == "starting"
+
+        recording = _wait_for_json(
+            f"http://127.0.0.1:{port}/session",
+            lambda payload: payload.get("state") == "recording",
+        )
+        assert recording["stderr_tail"][-1] == "🎤 Recording..."
+
+        stopped = _post_json(f"http://127.0.0.1:{port}/session/stop")
+        assert stopped["state"] == "idle"
+        assert stopped["last_transcript"]["transcript"] == "deterministic transcript"
+        assert stopped["last_transcript"]["metadata"]["e2e_mode"] is True
+        assert len(stopped["history"]) == 1
+
+        session = _wait_for_json(
+            f"http://127.0.0.1:{port}/session",
+            lambda payload: len(payload.get("history", [])) == 1,
+        )
+        assert session["history"][0]["payload"]["transcript"] == "deterministic transcript"
+
+        toggle_started = _post_json(f"http://127.0.0.1:{port}/session/toggle")
+        assert toggle_started["state"] == "starting"
+        _wait_for_json(
+            f"http://127.0.0.1:{port}/session",
+            lambda payload: payload.get("state") == "recording",
+        )
+        toggle_stopped = _post_json(f"http://127.0.0.1:{port}/session/toggle")
+        assert toggle_stopped["state"] == "idle"
+        assert len(toggle_stopped["history"]) == 2
+
+        cleared = _post_json(f"http://127.0.0.1:{port}/session/clear-history")
+        assert cleared["history"] == []
+        assert cleared["last_transcript"] is None
+    finally:
+        stdout = ""
+        if process.poll() is None:
+            process.terminate()
+            try:
+                stdout, _ = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, _ = process.communicate(timeout=5)
+        assert process.returncode == 0, stdout
