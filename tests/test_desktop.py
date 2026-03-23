@@ -67,6 +67,21 @@ def test_gui_subcommand_dispatches_to_desktop_launcher(monkeypatch):
     assert calls[0].port == 8765
 
 
+def test_gui_stage_subcommand_dispatches_to_desktop_stager(monkeypatch):
+    calls: list[SimpleNamespace] = []
+
+    def _fake_stage(namespace):
+        calls.append(namespace)
+        return 0
+
+    monkeypatch.setattr("parakeet.desktop.run_gui_stage_command", _fake_stage)
+
+    assert main(["gui-stage", "--json"]) == 0
+    assert len(calls) == 1
+    assert calls[0].command == "gui-stage"
+    assert calls[0].json_output is True
+
+
 def test_gui_bridge_flag_delegates_to_full_command(monkeypatch):
     monkeypatch.setattr("parakeet.desktop.run_full_command", lambda namespace: 7)
 
@@ -120,3 +135,29 @@ def test_full_command_reuses_existing_bridge(monkeypatch, capsys):
     assert desktop.run_full_command(namespace) == 0
     captured = capsys.readouterr()
     assert "Reusing existing Parakeet bridge" in captured.out
+
+
+def test_stage_windows_desktop_app_copies_desktop_folder(monkeypatch, tmp_path: Path):
+    repo_root = tmp_path / "repo"
+    app_dir = repo_root / "desktop" / "electrobun"
+    (app_dir / "src").mkdir(parents=True)
+    (app_dir / "package.json").write_text('{"name":"parakeet-electrobun"}')
+    (app_dir / "src" / "index.ts").write_text("console.log('hello');")
+    (app_dir / "node_modules").mkdir()
+    (app_dir / "node_modules" / "ignored.txt").write_text("ignore me")
+    (app_dir / ".tmp-check").mkdir()
+    (app_dir / ".tmp-check" / "ignored.txt").write_text("ignore me")
+
+    stage_root = tmp_path / "mnt" / "c" / "Users" / "dev" / "AppData" / "Local" / "ParakeetDictation" / "staging"
+    monkeypatch.setattr(desktop, "windows_stage_root", lambda: stage_root)
+    monkeypatch.setattr(desktop, "windows_path_from_wsl", lambda path: f"C:\\stage\\{path.name}")
+
+    payload = desktop.stage_windows_desktop_app(app_dir)
+    staged_app_dir = Path(payload["desktop_app_dir"])
+
+    assert staged_app_dir == next(stage_root.glob("*/desktop/electrobun"))
+    assert (staged_app_dir / "package.json").exists()
+    assert (staged_app_dir / "src" / "index.ts").read_text() == "console.log('hello');"
+    assert not (staged_app_dir / "node_modules").exists()
+    assert not (staged_app_dir / ".tmp-check").exists()
+    assert payload["windows_desktop_app_dir"].startswith("C:\\stage\\")

@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "category": "infrastructure",
+      "description": "Windows-side staging can be created from the WSL repo so Windows tooling does not build from a \\\\wsl.localhost UNC working directory.",
+      "steps": [
+        "From WSL, create a temporary Windows-path staging copy or worktree for desktop build and run steps.",
+        "Run a Windows-side command against the staged desktop folder and verify it executes from a drive-backed path instead of a UNC working directory."
+      ],
+      "passes": true,
+      "regression_notes": "Verified with `.venv/bin/python -m parakeet.cli gui-stage --json` plus `cmd.exe /v:on /c \"cd /d <staged-desktop-path> && echo !CD! && if exist package.json echo PACKAGE_OK\"`, which resolved to a `C:\\Users\\...` staging path and confirmed the staged desktop manifest was present."
+    },
+    {
+      "category": "infrastructure",
+      "description": "The repo exposes a deterministic Windows packaging command for the Electrobun desktop app from the WSL-controlled workflow.",
+      "steps": [
+        "From WSL, run the documented Windows packaging command.",
+        "Verify an unsigned Windows x64 app artifact is produced at a documented path."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    },
+    {
+      "category": "verification",
+      "description": "The packaged Windows app can launch unattended and expose startup diagnostics without user interaction.",
+      "steps": [
+        "Launch the packaged Windows app with E2E automation enabled.",
+        "Verify the renderer and RPC layer initialize successfully and the process can be shut down cleanly with captured logs."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    },
+    {
+      "category": "integration",
+      "description": "The real parakeet bridge supports deterministic E2E mode without microphone access or model loading.",
+      "steps": [
+        "Start `parakeet bridge` in WSL with E2E env vars enabled.",
+        "Call the existing bridge session endpoints and verify deterministic transcript, state, and history payloads."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    },
+    {
+      "category": "integration",
+      "description": "The desktop app exposes a minimal localhost-only automation surface when explicitly enabled for E2E.",
+      "steps": [
+        "Launch the Windows app with automation env vars enabled.",
+        "Read app state and invoke only user-equivalent actions through the automation surface."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    },
+    {
+      "category": "functional",
+      "description": "The desktop app recovers cleanly between offline and online bridge states without restart.",
+      "steps": [
+        "Launch the GUI while the bridge is unavailable and verify a visible offline or error state plus bridge guidance.",
+        "Restore the bridge and verify the GUI reconnects without restarting."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    },
+    {
+      "category": "functional",
+      "description": "The main window controls can start and stop a deterministic dictation session against the WSL bridge.",
+      "steps": [
+        "Use the primary GUI control to start a session against the WSL bridge in deterministic E2E mode.",
+        "Use the GUI to stop the session and verify the deterministic transcript appears in visible history."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    },
+    {
+      "category": "integration",
+      "description": "Tray menu actions can open the window, toggle recording, and quit the packaged app in unattended execution.",
+      "steps": [
+        "Verify tray registration is reported by the app and trigger the tray open and toggle actions through automation.",
+        "Verify the tray quit action closes the app cleanly."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    },
+    {
+      "category": "integration",
+      "description": "The configured global hotkey registers successfully and its callback path toggles recording end-to-end.",
+      "steps": [
+        "Launch the packaged app with the configured hotkey and verify registration succeeds.",
+        "Trigger the hotkey callback path in unattended execution and verify recording toggles and produces the deterministic transcript."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    },
+    {
+      "category": "verification",
+      "description": "The repo contains a single unattended local Windows plus WSL verification entrypoint for packaging and E2E.",
+      "steps": [
+        "Run the repo's documented unattended verification command from WSL.",
+        "Verify it packages the app, exercises the Windows GUI plus WSL bridge flow, and exits 0 with useful logs."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    },
+    {
+      "category": "documentation",
+      "description": "Windows support documentation and repo knowledge files reflect the supported Windows GUI plus WSL bridge workflow.",
+      "steps": [
+        "Follow the updated docs from a fresh WSL-first context to package and run the Windows GUI against the WSL bridge.",
+        "Verify the docs state support boundaries, WebView2 expectations, staging behavior, and the user-controlled lifecycle."
+      ],
+      "passes": false,
+      "regression_notes": ""
+    }
+  ]
+}

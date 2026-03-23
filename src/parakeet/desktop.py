@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -53,6 +55,67 @@ def ensure_desktop_app_available(app_dir: Path | None = None) -> Path:
     if not package_json.exists():
         raise DesktopAppError(f"Parakeet GUI package manifest not found at {package_json}")
     return resolved_app_dir
+
+
+def ensure_windows_interop_command(command_name: str) -> str:
+    command_path = shutil.which(command_name)
+    if command_path is None:
+        raise DesktopAppError(f"Windows staging requires `{command_name}` to be available from WSL.")
+    return command_path
+
+
+def run_text_command(command: list[str]) -> str:
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip()
+        raise DesktopAppError(stderr or f"Command failed: {' '.join(command)}")
+    return completed.stdout.strip()
+
+
+def read_windows_env_var(name: str) -> str:
+    cmd_exe = ensure_windows_interop_command("cmd.exe")
+    value = run_text_command([cmd_exe, "/c", "echo", f"%{name}%"])
+    if not value or value == f"%{name}%":
+        raise DesktopAppError(f"Windows environment variable `{name}` is not available from WSL.")
+    return value.splitlines()[-1].strip()
+
+
+def wsl_path_from_windows(path: str) -> Path:
+    wslpath = ensure_windows_interop_command("wslpath")
+    return Path(run_text_command([wslpath, "-u", path]))
+
+
+def windows_path_from_wsl(path: Path) -> str:
+    wslpath = ensure_windows_interop_command("wslpath")
+    return run_text_command([wslpath, "-w", str(path)])
+
+
+def windows_stage_root() -> Path:
+    local_appdata = read_windows_env_var("LOCALAPPDATA")
+    return wsl_path_from_windows(local_appdata) / "ParakeetDictation" / "staging"
+
+
+def stage_windows_desktop_app(app_dir: Path | None = None) -> dict[str, str]:
+    source_app_dir = ensure_desktop_app_available(app_dir)
+    source_root = source_app_dir.parents[2]
+    digest = hashlib.sha256(str(source_root).encode("utf-8")).hexdigest()[:12]
+    stage_root = windows_stage_root() / f"{source_root.name}-{digest}"
+    stage_app_dir = stage_root / "desktop" / "electrobun"
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
+    stage_app_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source_app_dir,
+        stage_app_dir,
+        ignore=shutil.ignore_patterns("node_modules", ".tmp-check", "dist"),
+    )
+    return {
+        "source_app_dir": str(source_app_dir),
+        "stage_root": str(stage_root),
+        "desktop_app_dir": str(stage_app_dir),
+        "windows_stage_root": windows_path_from_wsl(stage_root),
+        "windows_desktop_app_dir": windows_path_from_wsl(stage_app_dir),
+    }
 
 
 def ensure_gui_dependencies(app_dir: Path, bun_path: str) -> None:
@@ -122,6 +185,16 @@ def build_bridge_command(namespace: Any) -> list[str]:
     if bool(getattr(namespace, "debug", False)):
         command.append("--debug")
     return command
+
+
+def run_gui_stage_command(namespace: Any) -> int:
+    payload = stage_windows_desktop_app()
+    if bool(getattr(namespace, "json_output", False)):
+        print(json.dumps(payload))
+        return 0
+    print(f"Staged desktop app at {payload['desktop_app_dir']}")
+    print(payload["windows_desktop_app_dir"])
+    return 0
 
 
 def _run_gui_process(host: str, port: int) -> int:
