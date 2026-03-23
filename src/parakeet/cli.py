@@ -195,6 +195,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gui_stage_parser.set_defaults(handler=_run_gui_stage_namespace)
 
+    gui_package_parser = subparsers.add_parser(
+        "gui-package",
+        help="Build the staged Electrobun desktop app as a Windows package.",
+        description="Build the staged Electrobun desktop app as a Windows package.",
+    )
+    gui_package_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit machine-readable JSON.",
+    )
+    gui_package_parser.set_defaults(handler=_run_gui_package_namespace)
+
     full_parser = subparsers.add_parser(
         "full",
         help="Start the bridge and desktop GUI together.",
@@ -266,6 +279,12 @@ def _run_gui_stage_namespace(namespace: argparse.Namespace) -> int:
     from parakeet.desktop import run_gui_stage_command
 
     return run_gui_stage_command(namespace)
+
+
+def _run_gui_package_namespace(namespace: argparse.Namespace) -> int:
+    from parakeet.desktop import run_gui_package_command
+
+    return run_gui_package_command(namespace)
 
 
 def _run_full_namespace(namespace: argparse.Namespace) -> int:

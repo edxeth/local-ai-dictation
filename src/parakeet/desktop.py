@@ -197,6 +197,103 @@ def run_gui_stage_command(namespace: Any) -> int:
     return 0
 
 
+def ensure_windows_bun_available() -> str:
+    cmd_exe = ensure_windows_interop_command("cmd.exe")
+    output = run_text_command([cmd_exe, "/d", "/c", "where", "bun"])
+    bun_path = output.splitlines()[0].strip() if output else ""
+    if not bun_path:
+        raise DesktopAppError("Windows packaging requires `bun.exe` to be available on the Windows PATH.")
+    return bun_path
+
+
+def find_windows_powershell() -> str | None:
+    powershell_path = shutil.which("powershell.exe")
+    if powershell_path is not None:
+        return powershell_path
+    fallback = Path("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
+    if fallback.exists():
+        return str(fallback)
+    return None
+
+
+def run_windows_in_dir(windows_dir: str, commands: list[str]) -> None:
+    powershell_path = find_windows_powershell()
+    if powershell_path is not None:
+        escaped_dir = windows_dir.replace("'", "''")
+        script_parts = [f"Set-Location -LiteralPath '{escaped_dir}'"]
+        for command in commands:
+            script_parts.append(command)
+            script_parts.append("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
+        completed = subprocess.run(
+            [
+                powershell_path,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "; ".join(script_parts),
+            ],
+            check=False,
+        )
+    else:
+        cmd_exe = ensure_windows_interop_command("cmd.exe")
+        completed = subprocess.run(
+            [cmd_exe, "/c", f"cd /d {windows_dir} && {' && '.join(commands)}"],
+            check=False,
+        )
+    if completed.returncode != 0:
+        raise DesktopAppError(f"Windows command failed in {windows_dir}: {' && '.join(commands)}")
+
+
+def collect_windows_package_artifacts(app_dir: Path) -> dict[str, str]:
+    build_dir = app_dir / "build" / "stable-win-x64"
+    if not build_dir.exists():
+        raise DesktopAppError(f"Windows build output not found at {build_dir}")
+
+    installer_path = next(build_dir.glob("*-Setup.exe"), None)
+    if installer_path is None:
+        raise DesktopAppError(f"Windows installer not found in {build_dir}")
+
+    metadata_path = next(build_dir.glob("*-Setup.metadata.json"), None)
+    if metadata_path is None:
+        raise DesktopAppError(f"Windows installer metadata not found in {build_dir}")
+
+    archive_path = next(build_dir.glob("*-Setup.tar.zst"), None)
+    if archive_path is None:
+        raise DesktopAppError(f"Windows installer archive not found in {build_dir}")
+
+    zip_path = next((app_dir / "artifacts").glob("stable-win-x64-*-Setup.zip"), None)
+    if zip_path is None:
+        raise DesktopAppError(f"Windows packaged artifact zip not found in {app_dir / 'artifacts'}")
+
+    return {
+        "build_dir": str(build_dir),
+        "windows_build_dir": windows_path_from_wsl(build_dir),
+        "installer_path": str(installer_path),
+        "windows_installer_path": windows_path_from_wsl(installer_path),
+        "setup_archive_path": str(archive_path),
+        "windows_setup_archive_path": windows_path_from_wsl(archive_path),
+        "metadata_path": str(metadata_path),
+        "windows_metadata_path": windows_path_from_wsl(metadata_path),
+        "artifact_zip_path": str(zip_path),
+        "windows_artifact_zip_path": windows_path_from_wsl(zip_path),
+    }
+
+
+def run_gui_package_command(namespace: Any) -> int:
+    ensure_windows_bun_available()
+    payload = stage_windows_desktop_app()
+    windows_app_dir = payload["windows_desktop_app_dir"]
+    run_windows_in_dir(windows_app_dir, ["bun install", "bunx electrobun build --env=stable"])
+    payload.update(collect_windows_package_artifacts(Path(payload["desktop_app_dir"])))
+    if bool(getattr(namespace, "json_output", False)):
+        print(json.dumps(payload))
+        return 0
+    print(f"Packaged Windows desktop app at {payload['installer_path']}")
+    print(payload["windows_installer_path"])
+    return 0
+
+
 def _run_gui_process(host: str, port: int) -> int:
     bun_path = ensure_bun_available()
     app_dir = ensure_desktop_app_available()

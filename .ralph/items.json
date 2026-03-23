@@ -18,8 +18,8 @@
         "From WSL, run the documented Windows packaging command.",
         "Verify an unsigned Windows x64 app artifact is produced at a documented path."
       ],
-      "passes": false,
-      "regression_notes": ""
+      "passes": true,
+      "regression_notes": "Verified with `.venv/bin/python -m parakeet.cli gui-package --json`, which staged `desktop/electrobun` to `%LOCALAPPDATA%`, ran `bun install` plus `bunx electrobun build --env=stable` on Windows, and produced the unsigned installer at `build/stable-win-x64/parakeet-desktop-Setup.exe` plus `artifacts/stable-win-x64-parakeet-desktop-Setup.zip`."
     },
     {
       "category": "verification",

@@ -82,6 +82,21 @@ def test_gui_stage_subcommand_dispatches_to_desktop_stager(monkeypatch):
     assert calls[0].json_output is True
 
 
+def test_gui_package_subcommand_dispatches_to_desktop_packager(monkeypatch):
+    calls: list[SimpleNamespace] = []
+
+    def _fake_package(namespace):
+        calls.append(namespace)
+        return 0
+
+    monkeypatch.setattr("parakeet.desktop.run_gui_package_command", _fake_package)
+
+    assert main(["gui-package", "--json"]) == 0
+    assert len(calls) == 1
+    assert calls[0].command == "gui-package"
+    assert calls[0].json_output is True
+
+
 def test_gui_bridge_flag_delegates_to_full_command(monkeypatch):
     monkeypatch.setattr("parakeet.desktop.run_full_command", lambda namespace: 7)
 
@@ -161,3 +176,41 @@ def test_stage_windows_desktop_app_copies_desktop_folder(monkeypatch, tmp_path: 
     assert not (staged_app_dir / "node_modules").exists()
     assert not (staged_app_dir / ".tmp-check").exists()
     assert payload["windows_desktop_app_dir"].startswith("C:\\stage\\")
+
+
+def test_run_gui_package_command_stages_build_and_reports_artifacts(monkeypatch, tmp_path: Path):
+    app_dir = tmp_path / "desktop" / "electrobun"
+    app_dir.mkdir(parents=True)
+    build_dir = app_dir / "build" / "stable-win-x64"
+    artifacts_dir = app_dir / "artifacts"
+
+    monkeypatch.setattr(desktop, "ensure_windows_bun_available", lambda: "C:\\Users\\dev\\scoop\\shims\\bun.exe")
+    monkeypatch.setattr(
+        desktop,
+        "stage_windows_desktop_app",
+        lambda: {
+            "desktop_app_dir": str(app_dir),
+            "windows_desktop_app_dir": "C:\\stage\\electrobun",
+        },
+    )
+    monkeypatch.setattr(desktop, "windows_path_from_wsl", lambda path: f"C:\\stage\\{path.name}")
+
+    commands: list[tuple[str, list[str]]] = []
+
+    def _fake_run_windows_in_dir(windows_dir: str, command_list: list[str]) -> None:
+        commands.append((windows_dir, command_list))
+        build_dir.mkdir(parents=True)
+        artifacts_dir.mkdir(parents=True)
+        (build_dir / "parakeet-desktop-Setup.exe").write_text("setup")
+        (build_dir / "parakeet-desktop-Setup.tar.zst").write_text("archive")
+        (build_dir / "parakeet-desktop-Setup.metadata.json").write_text("{}")
+        (artifacts_dir / "stable-win-x64-parakeet-desktop-Setup.zip").write_text("zip")
+
+    monkeypatch.setattr(desktop, "run_windows_in_dir", _fake_run_windows_in_dir)
+
+    namespace = SimpleNamespace(json_output=False)
+    assert desktop.run_gui_package_command(namespace) == 0
+    assert commands == [(
+        "C:\\stage\\electrobun",
+        ["bun install", "bunx electrobun build --env=stable"],
+    )]
