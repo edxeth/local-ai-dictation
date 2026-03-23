@@ -64,6 +64,8 @@ type DesktopRPC = {
       toggleRecording: { params: {}; response: BridgeViewState };
       clearHistory: { params: {}; response: BridgeViewState };
       showWindow: { params: {}; response: { success: true } };
+      minimizeWindow: { params: {}; response: { success: true } };
+      closeWindow: { params: {}; response: { success: true } };
       reportRendererReady: { params: { userAgent: string }; response: { success: true } };
     };
     messages: {};
@@ -105,6 +107,8 @@ const confirmMessage = document.getElementById("confirmMessage") as HTMLDivEleme
 const confirmCancelButton = document.getElementById("confirmCancelButton") as HTMLButtonElement;
 const confirmOkButton = document.getElementById("confirmOkButton") as HTMLButtonElement;
 const appShell = document.getElementById("appShell") as HTMLDivElement;
+const minimizeWindowButton = document.getElementById("minimizeWindowButton") as HTMLButtonElement;
+const closeWindowButton = document.getElementById("closeWindowButton") as HTMLButtonElement;
 const statusBadge = document.getElementById("statusBadge") as HTMLDivElement;
 const hotkeyValue = document.getElementById("hotkeyValue") as HTMLDivElement;
 const toggleButton = document.getElementById("toggleButton") as HTMLButtonElement;
@@ -539,6 +543,28 @@ async function clearHistory() {
   }
 }
 
+async function minimizeWindow() {
+  try {
+    await electrobun.rpc!.request.minimizeWindow({});
+  } catch (error) {
+    errorBox.textContent = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function closeWindow() {
+  try {
+    await electrobun.rpc!.request.closeWindow({});
+  } catch (error) {
+    errorBox.textContent = error instanceof Error ? error.message : String(error);
+  }
+}
+
+minimizeWindowButton.addEventListener("click", () => {
+  void minimizeWindow();
+});
+closeWindowButton.addEventListener("click", () => {
+  void closeWindow();
+});
 toggleButton.addEventListener("click", () => {
   void primeSessionAudio();
   void toggleRecording();

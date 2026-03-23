@@ -26,79 +26,99 @@
       </div>
     </div>
 
-    <div class="app" id="appShell">
-      <header class="card hero hero-card">
-        <div class="hero-copy">
-          <div class="eyebrow">Parakeet // Desk Relay</div>
-          <h1>Transcript deck</h1>
-          <p class="sub">A polished Windows control surface for the WSL bridge, tuned for quick capture and clean review.</p>
+    <div class="window-shell">
+      <header class="titlebar electrobun-webkit-app-region-drag">
+        <div class="titlebar-brand">
+          <img class="titlebar-icon" src="assets/parakeet-icon.png" alt="" />
+          <div class="titlebar-copy">
+            <div class="titlebar-eyebrow">Parakeet</div>
+            <div class="titlebar-title">Dictation GUI</div>
+          </div>
         </div>
-        <div class="hero-status">
-          <div class="label">Bridge state</div>
-          <div id="statusBadge" class="badge offline">Disconnected</div>
+        <div class="titlebar-actions electrobun-webkit-app-region-no-drag">
+          <button id="minimizeWindowButton" class="window-control secondary" aria-label="Minimize window" title="Minimize">
+            <span aria-hidden="true">—</span>
+          </button>
+          <button id="closeWindowButton" class="window-control secondary" aria-label="Close window" title="Close">
+            <span aria-hidden="true">✕</span>
+          </button>
         </div>
       </header>
 
-      <section class="card control-card">
-        <div class="section-head">
-          <div>
-            <div class="label">Capture</div>
-            <div class="section-title">Session controls</div>
+      <div class="app" id="appShell">
+        <header class="card hero hero-card">
+          <div class="hero-copy">
+            <div class="eyebrow">Parakeet // Desk Relay</div>
+            <h1>Transcript deck</h1>
+            <p class="sub">A polished Windows control surface for the WSL bridge, tuned for quick capture and clean review.</p>
           </div>
-        </div>
-        <div id="controlRow" class="row spread control-row">
-          <div id="controlInfo" class="control-info">
-            <div class="label">Global hotkey</div>
-            <div id="hotkeyValue" class="value">—</div>
+          <div class="hero-status">
+            <div class="label">Bridge state</div>
+            <div id="statusBadge" class="badge offline">Disconnected</div>
           </div>
-          <button id="toggleButton" class="primary">Start recording</button>
-        </div>
-        <p id="statusLine" class="status-line">Waiting for bridge status…</p>
-      </section>
+        </header>
 
-      <section class="card transcript-card">
-        <div class="section-head">
-          <div>
-            <div class="label">Logbook</div>
-            <div class="section-title">Transcription history</div>
+        <section class="card control-card">
+          <div class="section-head">
+            <div>
+              <div class="label">Capture</div>
+              <div class="section-title">Session controls</div>
+            </div>
           </div>
-          <button id="clearHistoryButton" class="secondary">Clear history</button>
-        </div>
-        <div id="historyMeta" class="meta">Logbook empty</div>
-        <div id="historyList" class="history-list">
-          <div class="history-empty">
-            <div class="history-empty-kicker">Awaiting first pass</div>
-            <div class="history-empty-title">No transcripts yet</div>
-            <div class="history-empty-copy">Start a recording and completed transcripts will land here for quick copy and review.</div>
+          <div id="controlRow" class="row spread control-row">
+            <div id="controlInfo" class="control-info">
+              <div class="label">Global hotkey</div>
+              <div id="hotkeyValue" class="value">—</div>
+            </div>
+            <button id="toggleButton" class="primary">Start recording</button>
           </div>
-        </div>
-        <button id="showMoreButton" class="secondary history-more hidden">Show 10 more</button>
-      </section>
+          <p id="statusLine" class="status-line">Waiting for bridge status…</p>
+        </section>
 
-      <details class="card collapsible-card" id="bridgeSection">
-        <summary class="collapsible-summary">
-          <div>
-            <span class="label">Bridge</span>
-            <div class="section-title section-title-small">Connection details</div>
+        <section class="card transcript-card">
+          <div class="section-head">
+            <div>
+              <div class="label">Logbook</div>
+              <div class="section-title">Transcription history</div>
+            </div>
+            <button id="clearHistoryButton" class="secondary">Clear history</button>
           </div>
-          <span class="summary-hint">Show details</span>
-        </summary>
-        <div class="label top-gap">Bridge URL</div>
-        <div id="bridgeUrl" class="mono">—</div>
-        <div class="label top-gap">Run this in WSL</div>
-        <pre id="bridgeCommand" class="command">—</pre>
-      </details>
+          <div id="historyMeta" class="meta">Logbook empty</div>
+          <div id="historyList" class="history-list">
+            <div class="history-empty">
+              <div class="history-empty-kicker">Awaiting first pass</div>
+              <div class="history-empty-title">No transcripts yet</div>
+              <div class="history-empty-copy">Start a recording and completed transcripts will land here for quick copy and review.</div>
+            </div>
+          </div>
+          <button id="showMoreButton" class="secondary history-more hidden">Show 10 more</button>
+        </section>
 
-      <details class="card collapsible-card debug-card" id="diagnosticsSection">
-        <summary class="collapsible-summary">
-          <div>
-            <span class="label">Diagnostics</span>
-            <div class="section-title section-title-small">Bridge logs</div>
-          </div>
-          <span class="summary-hint">Show logs</span>
-        </summary>
-        <pre id="errorBox" class="error-box">No bridge errors.</pre>
-      </details>
+        <details class="card collapsible-card" id="bridgeSection">
+          <summary class="collapsible-summary">
+            <div>
+              <span class="label">Bridge</span>
+              <div class="section-title section-title-small">Connection details</div>
+            </div>
+            <span class="summary-hint">Show details</span>
+          </summary>
+          <div class="label top-gap">Bridge URL</div>
+          <div id="bridgeUrl" class="mono">—</div>
+          <div class="label top-gap">Run this in WSL</div>
+          <pre id="bridgeCommand" class="command">—</pre>
+        </details>
+
+        <details class="card collapsible-card debug-card" id="diagnosticsSection">
+          <summary class="collapsible-summary">
+            <div>
+              <span class="label">Diagnostics</span>
+              <div class="section-title section-title-small">Bridge logs</div>
+            </div>
+            <span class="summary-hint">Show logs</span>
+          </summary>
+          <pre id="errorBox" class="error-box">No bridge errors.</pre>
+        </details>
+      </div>
     </div>
     <script src="index.js"></script>
   </body>

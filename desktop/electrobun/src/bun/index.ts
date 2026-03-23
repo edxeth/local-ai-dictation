@@ -118,6 +118,8 @@ type DesktopRPC = {
       toggleRecording: { params: {}; response: BridgeViewState };
       clearHistory: { params: {}; response: BridgeViewState };
       showWindow: { params: {}; response: { success: true } };
+      minimizeWindow: { params: {}; response: { success: true } };
+      closeWindow: { params: {}; response: { success: true } };
       reportRendererReady: { params: RendererReadyPayload; response: { success: true } };
     };
     messages: {};
@@ -143,6 +145,7 @@ const GUI_LOG_PATH = Bun.env.PARAKEET_GUI_LOG_PATH || (DEFAULT_STARTUP_LOG_DIR ?
 const GUI_STARTUP_DIAGNOSTICS_PATH = Bun.env.PARAKEET_GUI_STARTUP_DIAGNOSTICS_PATH
   || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup-diagnostics.json") : "");
 const GUI_AUTO_EXIT_MS = Number(Bun.env.PARAKEET_GUI_AUTO_EXIT_MS || "0") || 0;
+const APP_ICON_URL = "views://mainview/assets/parakeet-icon.png";
 const emptySession = (): SessionPayload => ({
   schema_version: 1,
   state: "stopped",
@@ -387,8 +390,9 @@ appendGuiLog("INFO", "Creating BrowserWindow...");
 mainWindow = new BrowserWindow({
   title: "Parakeet Dictation GUI",
   url: "views://mainview/index.html",
+  titleBarStyle: "hidden",
   frame: {
-    width: 500,
+    width: 540,
     height: 1080,
     x: 220,
     y: 120,
@@ -420,6 +424,14 @@ mainWindow = new BrowserWindow({
           showMainWindow();
           return { success: true } as const;
         },
+        minimizeWindow: async () => {
+          mainWindow?.minimize();
+          return { success: true } as const;
+        },
+        closeWindow: async () => {
+          triggerQuit("window-control:close");
+          return { success: true } as const;
+        },
         reportRendererReady: async ({ userAgent }) => {
           updateStartupDiagnostics({
             rendererReady: true,
@@ -438,7 +450,7 @@ mainWindow = new BrowserWindow({
 });
 appendGuiLog("INFO", "BrowserWindow created");
 
-const MIN_WINDOW_WIDTH = 500;
+const MIN_WINDOW_WIDTH = 540;
 const MIN_WINDOW_HEIGHT = 1080;
 
 async function toggleFromBackground() {
@@ -581,7 +593,12 @@ function startAutomationServer() {
 
 ensureMainWindowSize();
 
-tray = new Tray({ title: "Parakeet" });
+tray = new Tray({
+  title: "Parakeet",
+  image: APP_ICON_URL,
+  width: 18,
+  height: 18,
+});
 updateStartupDiagnostics({ trayCreated: true, trayCreatedAt: timestamp() });
 appendGuiLog("INFO", "Tray created");
 

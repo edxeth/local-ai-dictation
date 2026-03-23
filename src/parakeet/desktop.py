@@ -246,6 +246,52 @@ def run_windows_in_dir(windows_dir: str, commands: list[str]) -> None:
         raise DesktopAppError(f"Windows command failed in {windows_dir}: {' && '.join(commands)}")
 
 
+def embed_windows_exe_icon(executable_path: Path, icon_path: Path, rcedit_path: Path) -> None:
+    powershell_path = find_windows_powershell()
+    if powershell_path is not None:
+        completed = subprocess.run(
+            [
+                powershell_path,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                f"& '{_powershell_quote(windows_path_from_wsl(rcedit_path))}' '{_powershell_quote(windows_path_from_wsl(executable_path))}' --set-icon '{_powershell_quote(windows_path_from_wsl(icon_path))}'",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    else:
+        completed = subprocess.run(
+            [str(rcedit_path), str(executable_path), "--set-icon", str(icon_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise DesktopAppError(detail or f"Failed to embed icon into {executable_path}")
+
+
+def apply_windows_packaged_icon_workaround(app_dir: Path) -> None:
+    icon_path = app_dir / "src" / "mainview" / "assets" / "parakeet-icon.ico"
+    rcedit_path = app_dir / "node_modules" / "rcedit" / "bin" / "rcedit-x64.exe"
+    build_dir = app_dir / "build" / "stable-win-x64"
+    if not icon_path.exists() or not rcedit_path.exists() or not build_dir.exists():
+        return
+
+    targets = [
+        build_dir / "parakeet-desktop" / "bin" / "launcher.exe",
+        build_dir / "parakeet-desktop" / "bin" / "bun.exe",
+    ]
+    targets.extend(sorted(build_dir.glob("*-Setup.exe")))
+
+    for target in targets:
+        if target.exists():
+            embed_windows_exe_icon(target, icon_path, rcedit_path)
+
+
 def _read_package_metadata(metadata_path: Path) -> dict[str, Any]:
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -302,8 +348,10 @@ def collect_windows_package_artifacts(app_dir: Path) -> dict[str, Any]:
 def build_windows_package_payload() -> dict[str, Any]:
     ensure_windows_bun_available()
     payload = stage_windows_desktop_app()
+    app_dir = Path(payload["desktop_app_dir"])
     run_windows_in_dir(payload["windows_desktop_app_dir"], ["bun install", "bunx electrobun build --env=stable"])
-    payload.update(collect_windows_package_artifacts(Path(payload["desktop_app_dir"])))
+    apply_windows_packaged_icon_workaround(app_dir)
+    payload.update(collect_windows_package_artifacts(app_dir))
     return payload
 
 
