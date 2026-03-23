@@ -88,8 +88,8 @@
         "Launch the packaged app with the configured hotkey and verify registration succeeds.",
         "Trigger the hotkey callback path in unattended execution and verify recording toggles and produces the deterministic transcript."
       ],
-      "passes": false,
-      "regression_notes": ""
+      "passes": true,
+      "regression_notes": "Verified with `.venv/bin/python -m parakeet.cli gui-package-hotkey --json --timeout-seconds 120`, which packaged and installed the Windows app, confirmed `CommandOrControl+Alt+R` registered successfully, triggered the real hotkey callback path twice through the localhost E2E surface, observed `recording` then `idle`, confirmed `hotkey deterministic transcript` in visible history, and exited cleanly with `shutdownReason=automation:quit`."
     },
     {
       "category": "verification",
