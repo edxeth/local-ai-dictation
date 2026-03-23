@@ -90,8 +90,15 @@ Subcommands:
 - `parakeet doctor`
 - `parakeet benchmark`
 - `parakeet bridge`
-- `parakeet gui`
-- `parakeet full`
+- `parakeet gui-stage`
+- `parakeet gui-package`
+- `parakeet gui-package-smoke`
+- `parakeet gui-package-automation`
+- `parakeet gui-package-bridge-recovery`
+- `parakeet gui-package-main-window`
+- `parakeet gui-package-tray`
+- `parakeet gui-package-hotkey`
+- `parakeet gui-package-verify`
 
 ## Dictation
 
@@ -182,6 +189,7 @@ Supported first-release Windows topology:
 - Microsoft Edge WebView2 runtime available on Windows
 - no native Windows backend
 - no ARM64 packaging promise yet
+- no legacy Linux/WSLg desktop app path
 
 Recommended packaged Windows workflow from WSL:
 
@@ -209,30 +217,14 @@ The packaging command stages `desktop/electrobun/` under `%LOCALAPPDATA%\Parakee
 
 `gui-package-verify` is the single repo-supported unattended Windows + WSL verification entrypoint. It packages the app, launches the packaged Windows GUI, exercises smoke/automation/bridge-recovery/main-window/tray/hotkey coverage, and preserves Windows diagnostics/log bundles under `%LOCALAPPDATA%\ParakeetDictation\staging\...\verify\`.
 
-Linux/WSL developer-run GUI commands still exist:
-
-```bash
-parakeet bridge              # backend only
-parakeet gui                 # GUI only, expects an already-running bridge
-parakeet gui --bridge        # GUI + auto-start bridge for local dev
-parakeet full                # alias for the same combined flow
-```
-
-If you run the Electrobun app directly on Linux/WSL, install its tray/runtime dependency once:
-
-```bash
-sudo apt install -y libayatana-appindicator3-1
-```
-
 Desktop behavior:
 - the bridge is localhost-only and opt-in
 - the supported packaged Windows path keeps bridge startup user-controlled
-- `parakeet gui` alone does not auto-start the bridge; use `parakeet gui --bridge` or `parakeet full` only for local dev inside Linux/WSL
 - the app stays locked while the bridge is warming the model
 - transcript history is in-memory for the current bridge session only
 - the app can clear the visible transcript history
+- the app plays a short sound when recording starts and another when recording stops
 - default hotkey is `Ctrl` + `Alt` + `R`
-- under WSLg, the hotkey works best while the app window is focused; true system-wide shortcut capture is not fully reliable in this environment
 - override bridge URL or hotkey with `PARAKEET_BRIDGE_URL`, `PARAKEET_BRIDGE_COMMAND`, and `PARAKEET_HOTKEY`
 
 ## Benchmark

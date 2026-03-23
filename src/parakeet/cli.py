@@ -168,20 +168,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_bridge_cli_arguments(bridge_parser)
     bridge_parser.set_defaults(handler=_run_bridge_namespace)
 
-    gui_parser = subparsers.add_parser(
-        "gui",
-        aliases=["app"],
-        help="Run the Electrobun desktop GUI.",
-        description="Run the Electrobun desktop GUI.",
-    )
-    add_bridge_cli_arguments(gui_parser)
-    gui_parser.add_argument(
-        "--bridge",
-        action="store_true",
-        help="Start the bridge automatically before launching the GUI.",
-    )
-    gui_parser.set_defaults(handler=_run_gui_namespace)
-
     gui_stage_parser = subparsers.add_parser(
         "gui-stage",
         help="Stage the Electrobun desktop app to a drive-backed Windows path.",
@@ -421,13 +407,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gui_package_verify_parser.set_defaults(handler=_run_gui_package_verify_namespace)
 
-    full_parser = subparsers.add_parser(
-        "full",
-        help="Start the bridge and desktop GUI together.",
-        description="Start the bridge and desktop GUI together.",
-    )
-    add_bridge_cli_arguments(full_parser)
-    full_parser.set_defaults(handler=_run_full_namespace)
     return parser
 
 
@@ -482,12 +461,6 @@ def _run_bridge_namespace(namespace: argparse.Namespace) -> int:
     return run_bridge_server(namespace)
 
 
-def _run_gui_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_command
-
-    return run_gui_command(namespace)
-
-
 def _run_gui_stage_namespace(namespace: argparse.Namespace) -> int:
     from parakeet.desktop import run_gui_stage_command
 
@@ -540,12 +513,6 @@ def _run_gui_package_verify_namespace(namespace: argparse.Namespace) -> int:
     from parakeet.desktop import run_gui_package_verify_command
 
     return run_gui_package_verify_command(namespace)
-
-
-def _run_full_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_full_command
-
-    return run_full_command(namespace)
 
 
 def run_dictation_argv(argv: Sequence[str] | None = None) -> int:

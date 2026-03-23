@@ -7,10 +7,13 @@ Small Windows desktop control surface for `parakeet bridge`, with the supported 
 - shows bridge connectivity and dictation state
 - starts/stops recording from a small window
 - registers a global hotkey
+- plays a short sound when recording starts and another when recording stops
 - displays the latest transcript returned by the WSL bridge
 - adds a tray menu for open/toggle/quit
 
 ## Startup model
+
+Only the packaged Windows workflow is supported for this desktop app.
 
 ### Supported packaged Windows workflow
 
@@ -39,31 +42,6 @@ This stages `desktop/electrobun/` to `%LOCALAPPDATA%\ParakeetDictation\staging\.
 ```
 
 `gui-package-verify` packages the app and validates packaged smoke, localhost automation, bridge recovery, main-window controls, tray actions, and global hotkey wiring against the real deterministic WSL bridge.
-
-### Linux/WSL development workflow
-
-These commands are still useful for local development inside Linux/WSL:
-
-```bash
-parakeet gui          # GUI only, expects an already-running bridge
-parakeet gui --bridge # GUI + bridge together
-parakeet full         # alias for the combined flow
-```
-
-On Ubuntu/WSL/Linux hosts running the Electrobun app directly, install the tray/runtime dependency once:
-
-```bash
-sudo apt install -y libayatana-appindicator3-1
-```
-
-Then launch the desktop app from this folder:
-
-```bash
-bun install
-bun run start
-```
-
-`parakeet gui` and `parakeet full` will automatically run `bun install` once if `node_modules/` is missing.
 
 ## Environment overrides
 

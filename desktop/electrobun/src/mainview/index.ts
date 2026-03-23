@@ -36,6 +36,8 @@ type BridgeViewState = {
   session: SessionPayload;
 };
 
+type SessionStatus = SessionPayload["state"] | "offline";
+
 type RendererAutomationSnapshot = {
   statusBadgeText: string;
   statusBadgeClassName: string;
@@ -120,10 +122,12 @@ window.addEventListener("error", (event) => {
 });
 
 let currentState: BridgeViewState | null = null;
+let lastRenderedStateSignature: string | null = null;
 let visibleHistoryCount = 10;
 let historyClearedAfter: number | null = null;
 const copiedHistoryIds = new Set<string>();
 const copiedHistoryTimers = new Map<string, number>();
+let sessionAudioContext: AudioContext | null = null;
 
 function formatTimestamp(timestamp: number | null): string {
   if (!timestamp) return "—";
@@ -188,6 +192,73 @@ function syncViewportDensity() {
   const viewportHeight = window.innerHeight;
   appShell.classList.toggle("compact-window", viewportHeight <= 880);
   appShell.classList.toggle("tight-window", viewportHeight <= 760);
+}
+
+function getSessionAudioContext(): AudioContext | null {
+  const AudioContextCtor = window.AudioContext;
+  if (!AudioContextCtor) return null;
+  sessionAudioContext ??= new AudioContextCtor();
+  return sessionAudioContext;
+}
+
+async function primeSessionAudio(): Promise<void> {
+  const context = getSessionAudioContext();
+  if (!context || context.state !== "suspended") return;
+  try {
+    await context.resume();
+  } catch {
+    return;
+  }
+}
+
+function playSessionCue(kind: "start" | "stop") {
+  void playSessionCueAsync(kind);
+}
+
+async function playSessionCueAsync(kind: "start" | "stop"): Promise<void> {
+  const context = getSessionAudioContext();
+  if (!context) return;
+  if (context.state === "suspended") {
+    try {
+      await context.resume();
+    } catch {
+      return;
+    }
+  }
+
+  const startAt = context.currentTime + 0.01;
+  const firstFrequency = kind === "start" ? 880 : 740;
+  const secondFrequency = kind === "start" ? 1320 : 494;
+  const pulseGap = 0.16;
+  const pulseDuration = 0.12;
+  const peakGain = kind === "start" ? 0.42 : 0.38;
+
+  for (let pulseIndex = 0; pulseIndex < 2; pulseIndex += 1) {
+    const pulseStart = startAt + (pulseIndex * pulseGap);
+    const pulseEnd = pulseStart + pulseDuration;
+    const oscillator = context.createOscillator();
+    const gainNode = context.createGain();
+
+    oscillator.type = "square";
+    oscillator.frequency.setValueAtTime(pulseIndex === 0 ? firstFrequency : secondFrequency, pulseStart);
+
+    gainNode.gain.setValueAtTime(0.0001, pulseStart);
+    gainNode.gain.exponentialRampToValueAtTime(peakGain, pulseStart + 0.01);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, pulseEnd);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(context.destination);
+    oscillator.start(pulseStart);
+    oscillator.stop(pulseEnd + 0.01);
+  }
+}
+
+function emitSessionStateCue(previousState: SessionStatus, nextState: SessionStatus) {
+  if (previousState !== "recording" && nextState === "recording") {
+    playSessionCue("start");
+  } else if (previousState === "recording" && nextState !== "recording") {
+    playSessionCue("stop");
+  }
 }
 
 function setBusy(busy: boolean) {
@@ -279,6 +350,18 @@ function buildRendererAutomationSnapshot(viewState: BridgeViewState | null): Ren
   };
 }
 
+function buildStateSignature(viewState: BridgeViewState): string {
+  return JSON.stringify({
+    connected: viewState.connected,
+    bridgeUrl: viewState.bridgeUrl,
+    bridgeStartCommand: viewState.bridgeStartCommand,
+    hotkey: viewState.hotkey,
+    session: viewState.session,
+    historyClearedAfter,
+    visibleHistoryCount,
+  });
+}
+
 function renderEmptyHistory() {
   historyMeta.textContent = "Logbook empty";
   historyList.innerHTML = `
@@ -334,14 +417,17 @@ function renderHistory(items: TranscriptHistoryItem[]) {
 }
 
 function renderState(viewState: BridgeViewState) {
+  const previousState = currentState;
+  const previousFilteredCount = getFilteredHistory(previousState).length;
+  const previousSessionState: SessionStatus = previousState?.connected ? previousState.session.state : "offline";
   const nextFilteredHistory = getFilteredHistory(viewState);
-  const previousFilteredCount = getFilteredHistory(currentState).length;
   if (nextFilteredHistory.length > previousFilteredCount) {
     visibleHistoryCount = Math.max(visibleHistoryCount, 10);
   }
 
   currentState = viewState;
-  const sessionState = viewState.connected ? viewState.session.state : "offline";
+  const sessionState: SessionStatus = viewState.connected ? viewState.session.state : "offline";
+  emitSessionStateCue(previousSessionState, sessionState);
   statusBadge.textContent = viewState.connected ? viewState.session.state : "Disconnected";
   statusBadge.className = `badge ${sessionState}`;
 
@@ -396,13 +482,23 @@ function renderState(viewState: BridgeViewState) {
   errorBox.scrollTop = errorBox.scrollHeight;
 }
 
-async function refreshState() {
-  setBusy(true);
+async function refreshState({ quiet = false }: { quiet?: boolean } = {}) {
+  if (!quiet) {
+    setBusy(true);
+  }
   try {
     const state = await electrobun.rpc!.request.getBridgeState({});
-    renderState(state);
+    const nextSignature = buildStateSignature(state);
+    if (nextSignature !== lastRenderedStateSignature) {
+      renderState(state);
+      lastRenderedStateSignature = nextSignature;
+    } else {
+      currentState = state;
+    }
   } finally {
-    setBusy(false);
+    if (!quiet) {
+      setBusy(false);
+    }
   }
 }
 
@@ -414,6 +510,7 @@ async function toggleRecording() {
       ? await electrobun.rpc!.request.stopRecording({})
       : await electrobun.rpc!.request.startRecording({});
     renderState(next);
+    lastRenderedStateSignature = buildStateSignature(next);
   } catch (error) {
     errorBox.textContent = error instanceof Error ? error.message : String(error);
   } finally {
@@ -433,6 +530,7 @@ async function clearHistory() {
     const next = await electrobun.rpc!.request.clearHistory({});
     visibleHistoryCount = 10;
     renderState(next);
+    lastRenderedStateSignature = buildStateSignature(next);
     await refreshState();
   } catch (error) {
     errorBox.textContent = error instanceof Error ? error.message : String(error);
@@ -442,6 +540,7 @@ async function clearHistory() {
 }
 
 toggleButton.addEventListener("click", () => {
+  void primeSessionAudio();
   void toggleRecording();
 });
 clearHistoryButton.addEventListener("click", () => {
@@ -452,12 +551,16 @@ showMoreButton.addEventListener("click", () => {
   renderHistory(getFilteredHistory(currentState));
 });
 window.addEventListener("keydown", (event) => {
+  void primeSessionAudio();
   const pressedR = event.key.toLowerCase() === "r";
   if (pressedR && event.ctrlKey && event.altKey) {
     event.preventDefault();
     void toggleRecording();
   }
 });
+window.addEventListener("pointerdown", () => {
+  void primeSessionAudio();
+}, { passive: true });
 window.addEventListener("resize", syncViewportDensity);
 
 async function bootstrap() {
@@ -473,7 +576,7 @@ async function bootstrap() {
 
 syncViewportDensity();
 setInterval(() => {
-  void refreshState();
+  void refreshState({ quiet: true });
 }, 1000);
 
 void bootstrap();

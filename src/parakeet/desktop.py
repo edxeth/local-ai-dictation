@@ -44,13 +44,6 @@ def bridge_start_command(host: str, port: int) -> str:
     return f"parakeet bridge --host {host} --port {port}"
 
 
-def ensure_bun_available() -> str:
-    bun_path = shutil.which("bun")
-    if bun_path is None:
-        raise DesktopAppError("Parakeet GUI requires Bun. Install Bun, then rerun `parakeet gui`.")
-    return bun_path
-
-
 def ensure_desktop_app_available(app_dir: Path | None = None) -> Path:
     resolved_app_dir = desktop_app_dir() if app_dir is None else app_dir
     if not resolved_app_dir.exists():
@@ -1832,19 +1825,6 @@ def run_gui_package_smoke_command(namespace: Any) -> int:
     return 0
 
 
-def _run_gui_process(host: str, port: int) -> int:
-    bun_path = ensure_bun_available()
-    app_dir = ensure_desktop_app_available()
-    ensure_gui_dependencies(app_dir, bun_path)
-    completed = subprocess.run(
-        [bun_path, "run", "start"],
-        cwd=app_dir,
-        env=build_gui_environment(host, port),
-        check=False,
-    )
-    return int(completed.returncode)
-
-
 def _stop_process(process: subprocess.Popen[Any]) -> None:
     if process.poll() is not None:
         return
@@ -1856,40 +1836,3 @@ def _stop_process(process: subprocess.Popen[Any]) -> None:
         process.wait(timeout=5)
 
 
-def run_gui_command(namespace: Any) -> int:
-    if bool(getattr(namespace, "bridge", False)):
-        return run_full_command(namespace)
-    host = str(getattr(namespace, "host", DEFAULT_BRIDGE_HOST))
-    port = int(getattr(namespace, "port", DEFAULT_BRIDGE_PORT))
-    return _run_gui_process(host, port)
-
-
-def run_full_command(namespace: Any) -> int:
-    host = str(getattr(namespace, "host", DEFAULT_BRIDGE_HOST))
-    port = int(getattr(namespace, "port", DEFAULT_BRIDGE_PORT))
-    started_bridge = False
-    bridge_process: subprocess.Popen[Any] | None = None
-
-    if bridge_healthy(host, port):
-        print(f"Reusing existing Parakeet bridge at {bridge_url(host, port)}")
-    else:
-        bridge_process = subprocess.Popen(
-            build_bridge_command(namespace),
-            cwd=repo_root(),
-            env=os.environ.copy(),
-        )
-        started_bridge = True
-        if not wait_for_bridge(host, port):
-            exit_code = bridge_process.poll()
-            _stop_process(bridge_process)
-            if exit_code is None:
-                raise DesktopAppError(
-                    f"Parakeet bridge did not become ready at {bridge_url(host, port)} within 10 seconds."
-                )
-            raise DesktopAppError(f"Parakeet bridge exited before becoming ready (exit code {exit_code}).")
-
-    try:
-        return _run_gui_process(host, port)
-    finally:
-        if started_bridge and bridge_process is not None:
-            _stop_process(bridge_process)
