@@ -474,6 +474,20 @@ function triggerQuit(action: string) {
   }, 0);
 }
 
+async function handleTrayAction(action: string, source: "tray" | "automation") {
+  switch (action) {
+    case "open":
+      showMainWindow();
+      break;
+    case "toggle":
+      await toggleFromBackground();
+      break;
+    case "quit":
+      triggerQuit(source === "automation" ? "automation:tray/quit" : "tray-quit");
+      break;
+  }
+}
+
 async function runAutomationAction(action: AutomationActionId): Promise<AutomationState> {
   updateStartupDiagnostics({ lastAutomationAction: action });
   appendGuiLog("INFO", `Automation action: ${action}`);
@@ -481,7 +495,7 @@ async function runAutomationAction(action: AutomationActionId): Promise<Automati
   switch (action) {
     case "show-window":
     case "tray/open":
-      showMainWindow();
+      await handleTrayAction("open", "automation");
       break;
     case "window/toggle-recording":
       await runRendererAutomationAction("toggle-recording");
@@ -499,13 +513,13 @@ async function runAutomationAction(action: AutomationActionId): Promise<Automati
       await fetchBridgeJson("/session/clear-history", { method: "POST", body: "{}" });
       break;
     case "tray/toggle":
-      await toggleFromBackground();
+      await handleTrayAction("toggle", "automation");
       break;
     case "hotkey/trigger":
       await triggerHotkeyCallback();
       break;
     case "tray/quit":
-      triggerQuit("automation:tray/quit");
+      await handleTrayAction("quit", "automation");
       break;
     case "quit":
       triggerQuit("automation:quit");
@@ -583,16 +597,8 @@ tray.setMenu([
 ]);
 tray.on("tray-clicked", async (event: any) => {
   const action = event.data?.action;
-  switch (action) {
-    case "open":
-      showMainWindow();
-      break;
-    case "toggle":
-      await toggleFromBackground();
-      break;
-    case "quit":
-      exitApp("tray-quit");
-      break;
+  if (typeof action === "string") {
+    await handleTrayAction(action, "tray");
   }
 });
 
