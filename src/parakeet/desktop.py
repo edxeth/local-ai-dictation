@@ -281,15 +281,15 @@ def apply_windows_packaged_icon_workaround(app_dir: Path) -> None:
     if not icon_path.exists() or not rcedit_path.exists() or not build_dir.exists():
         return
 
-    targets = [
-        build_dir / "parakeet-desktop" / "bin" / "launcher.exe",
-        build_dir / "parakeet-desktop" / "bin" / "bun.exe",
-    ]
-    targets.extend(sorted(build_dir.glob("*-Setup.exe")))
+    targets: list[Path] = []
+    targets.extend(sorted((build_dir / "parakeet-desktop" / "bin").glob("*.exe")))
+    targets.extend(sorted(build_dir.glob("*.exe")))
 
+    seen: set[Path] = set()
     for target in targets:
-        if target.exists():
+        if target.exists() and target not in seen:
             embed_windows_exe_icon(target, icon_path, rcedit_path)
+            seen.add(target)
 
 
 def _read_package_metadata(metadata_path: Path) -> dict[str, Any]:

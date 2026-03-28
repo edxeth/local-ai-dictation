@@ -325,6 +325,39 @@ def test_run_gui_package_command_stages_build_and_reports_artifacts(monkeypatch,
     )]
 
 
+def test_apply_windows_packaged_icon_workaround_updates_all_windows_exes(monkeypatch, tmp_path: Path):
+    app_dir = tmp_path / "desktop" / "electrobun"
+    icon_path = app_dir / "src" / "mainview" / "assets" / "parakeet-icon.ico"
+    rcedit_path = app_dir / "node_modules" / "rcedit" / "bin" / "rcedit-x64.exe"
+    build_dir = app_dir / "build" / "stable-win-x64"
+    bin_dir = build_dir / "parakeet-desktop" / "bin"
+    bin_dir.mkdir(parents=True)
+    icon_path.parent.mkdir(parents=True)
+    rcedit_path.parent.mkdir(parents=True)
+    icon_path.write_text("icon")
+    rcedit_path.write_text("rcedit")
+
+    launcher_path = bin_dir / "launcher.exe"
+    bun_path = bin_dir / "bun.exe"
+    helper_path = bin_dir / "process_helper.exe"
+    setup_path = build_dir / "parakeet-desktop-Setup.exe"
+    for target in (launcher_path, bun_path, helper_path, setup_path):
+        target.write_text(target.name)
+
+    embedded: list[Path] = []
+
+    def _fake_embed(executable_path: Path, icon_file: Path, rcedit_file: Path) -> None:
+        assert icon_file == icon_path
+        assert rcedit_file == rcedit_path
+        embedded.append(executable_path)
+
+    monkeypatch.setattr(desktop, "embed_windows_exe_icon", _fake_embed)
+
+    desktop.apply_windows_packaged_icon_workaround(app_dir)
+
+    assert embedded == sorted([launcher_path, bun_path, helper_path, setup_path])
+
+
 def test_run_gui_package_bridge_recovery_command_verifies_offline_then_online(monkeypatch, tmp_path: Path):
     stage_root = tmp_path / "stage-root"
     stage_root.mkdir(parents=True)

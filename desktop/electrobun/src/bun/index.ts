@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { BrowserView, BrowserWindow, GlobalShortcut, Tray, type RPCSchema } from "electrobun/bun";
+import { native, toCString } from "../../node_modules/electrobun/dist/api/bun/proc/native";
 
 type SessionPayload = {
   schema_version: number;
@@ -27,6 +28,7 @@ type BridgeViewState = {
   bridgeUrl: string;
   bridgeStartCommand: string;
   hotkey: string;
+  hotkeyRegistered: boolean;
   connected: boolean;
   session: SessionPayload;
 };
@@ -51,6 +53,8 @@ type RendererAutomationSnapshot = {
 };
 
 type RendererAutomationActionId = "toggle-recording";
+
+type SessionCueKind = "start" | "complete";
 
 type StartupDiagnostics = {
   bridgeUrl: string;
@@ -128,6 +132,7 @@ type DesktopRPC = {
     requests: {
       getAutomationSnapshot: { params: {}; response: RendererAutomationSnapshot };
       runAutomationAction: { params: { action: RendererAutomationActionId }; response: RendererAutomationSnapshot };
+      playSessionCue: { params: { kind: SessionCueKind }; response: { success: true } };
     };
     messages: {};
   }>;
@@ -146,6 +151,7 @@ const GUI_STARTUP_DIAGNOSTICS_PATH = Bun.env.PARAKEET_GUI_STARTUP_DIAGNOSTICS_PA
   || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup-diagnostics.json") : "");
 const GUI_AUTO_EXIT_MS = Number(Bun.env.PARAKEET_GUI_AUTO_EXIT_MS || "0") || 0;
 const APP_ICON_URL = "views://mainview/assets/parakeet-icon.png";
+const APP_WINDOW_ICON_PATH = join(import.meta.dir, "..", "..", "app.ico");
 const emptySession = (): SessionPayload => ({
   schema_version: 1,
   state: "stopped",
@@ -249,6 +255,7 @@ async function readBridgeState(): Promise<BridgeViewState> {
       bridgeUrl: BRIDGE_URL,
       bridgeStartCommand: BRIDGE_START_COMMAND,
       hotkey: HOTKEY,
+      hotkeyRegistered: startupDiagnostics.hotkeyRegistered,
       connected: true,
       session: health.session as SessionPayload,
     };
@@ -257,6 +264,7 @@ async function readBridgeState(): Promise<BridgeViewState> {
       bridgeUrl: BRIDGE_URL,
       bridgeStartCommand: BRIDGE_START_COMMAND,
       hotkey: HOTKEY,
+      hotkeyRegistered: startupDiagnostics.hotkeyRegistered,
       connected: false,
       session: {
         ...emptySession(),
@@ -265,6 +273,53 @@ async function readBridgeState(): Promise<BridgeViewState> {
       },
     };
   }
+}
+
+const BRIDGE_POLL_INTERVAL_MS = 120;
+const HOTKEY_COOLDOWN_MS = 450;
+
+let lastObservedSessionState: SessionPayload["state"] | "offline" = "offline";
+let lastObservedCompletionAt: number | null = null;
+
+async function requestRendererSessionCue(kind: "start" | "complete") {
+  if (!startupDiagnostics.rendererRpcReady || !mainWindow?.webview.rpc) {
+    return;
+  }
+
+  try {
+    await mainWindow.webview.rpc.request.playSessionCue({ kind });
+  } catch (error) {
+    appendGuiLog("WARN", `Failed to play ${kind} cue in renderer: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function applyObservedBridgeState(state: BridgeViewState, { allowCue = true }: { allowCue?: boolean } = {}) {
+  const nextSessionState = state.connected ? state.session.state : "offline";
+  const nextCompletedAt = state.connected ? state.session.last_completed_at : null;
+
+  if (allowCue) {
+    if (lastObservedSessionState !== "recording" && nextSessionState === "recording") {
+      void requestRendererSessionCue("start");
+    }
+    if (
+      lastObservedCompletionAt !== null
+      && nextCompletedAt !== null
+      && nextCompletedAt > lastObservedCompletionAt
+    ) {
+      void requestRendererSessionCue("complete");
+    }
+  }
+
+  lastObservedSessionState = nextSessionState;
+  if (nextCompletedAt !== null) {
+    lastObservedCompletionAt = nextCompletedAt;
+  }
+}
+
+async function refreshBridgeStateCache({ allowCue = true }: { allowCue?: boolean } = {}) {
+  const state = await readBridgeState();
+  applyObservedBridgeState(state, { allowCue });
+  return state;
 }
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -330,7 +385,7 @@ async function readAutomationState(): Promise<AutomationState> {
       userAgent: startupDiagnostics.rendererUserAgent,
       snapshot: await readRendererAutomationSnapshot(),
     },
-    bridge: await readBridgeState(),
+    bridge: await refreshBridgeStateCache(),
     diagnostics: { ...startupDiagnostics },
   };
 }
@@ -339,7 +394,10 @@ let mainWindow: BrowserWindow<any> | null = null;
 let tray: Tray | null = null;
 let autoExitTimer: ReturnType<typeof setTimeout> | null = null;
 let automationServer: ReturnType<typeof Bun.serve> | null = null;
+let bridgePollTimer: ReturnType<typeof setInterval> | null = null;
 let shuttingDown = false;
+let sessionToggleInFlight = false;
+let lastHotkeyInvocationAt = 0;
 
 function exitApp(reason: string, exitCode = 0) {
   if (shuttingDown) {
@@ -356,6 +414,10 @@ function exitApp(reason: string, exitCode = 0) {
   });
   appendGuiLog("INFO", `Shutting down app: ${reason}`);
   automationServer?.stop(true);
+  if (bridgePollTimer) {
+    clearInterval(bridgePollTimer);
+    bridgePollTimer = null;
+  }
   GlobalShortcut.unregisterAll();
   tray?.remove();
   process.exit(exitCode);
@@ -369,6 +431,20 @@ function scheduleAutoExit() {
   autoExitTimer = setTimeout(() => {
     exitApp("e2e-auto-exit");
   }, GUI_AUTO_EXIT_MS);
+}
+
+function startBridgePolling() {
+  if (bridgePollTimer) {
+    return;
+  }
+  void refreshBridgeStateCache({ allowCue: false }).catch((error) => {
+    appendGuiLog("WARN", `Initial bridge poll failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  bridgePollTimer = setInterval(() => {
+    void refreshBridgeStateCache().catch((error) => {
+      appendGuiLog("WARN", `Bridge poll failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, BRIDGE_POLL_INTERVAL_MS);
 }
 
 process.on("uncaughtException", (error) => {
@@ -390,7 +466,8 @@ appendGuiLog("INFO", "Creating BrowserWindow...");
 mainWindow = new BrowserWindow({
   title: "Parakeet Dictation GUI",
   url: "views://mainview/index.html",
-  titleBarStyle: "hidden",
+  titleBarStyle: "default",
+  transparent: false,
   frame: {
     width: 540,
     height: 1080,
@@ -402,23 +479,23 @@ mainWindow = new BrowserWindow({
     handlers: {
       requests: {
         getBridgeState: async () => {
-          return await readBridgeState();
+          return await refreshBridgeStateCache();
         },
         startRecording: async () => {
           await fetchBridgeJson("/session/start", { method: "POST", body: "{}" });
-          return await readBridgeState();
+          return await refreshBridgeStateCache();
         },
         stopRecording: async () => {
           await fetchBridgeJson("/session/stop", { method: "POST", body: "{}" });
-          return await readBridgeState();
+          return await refreshBridgeStateCache();
         },
         toggleRecording: async () => {
           await fetchBridgeJson("/session/toggle", { method: "POST", body: "{}" });
-          return await readBridgeState();
+          return await refreshBridgeStateCache();
         },
         clearHistory: async () => {
           await fetchBridgeJson("/session/clear-history", { method: "POST", body: "{}" });
-          return await readBridgeState();
+          return await refreshBridgeStateCache();
         },
         showWindow: async () => {
           showMainWindow();
@@ -449,15 +526,32 @@ mainWindow = new BrowserWindow({
   }),
 });
 appendGuiLog("INFO", "BrowserWindow created");
+applyWindowsWindowIcon();
 
 const MIN_WINDOW_WIDTH = 540;
 const MIN_WINDOW_HEIGHT = 1080;
 
-async function toggleFromBackground() {
+async function toggleFromBackground(source: "hotkey" | "tray" | "automation" = "tray") {
+  const now = Date.now();
+  if (source === "hotkey" && now - lastHotkeyInvocationAt < HOTKEY_COOLDOWN_MS) {
+    return;
+  }
+  if (source === "hotkey") {
+    lastHotkeyInvocationAt = now;
+  }
+  if (sessionToggleInFlight) {
+    appendGuiLog("WARN", `Ignoring ${source} toggle while another session action is in flight`);
+    return;
+  }
+
+  sessionToggleInFlight = true;
   try {
     await fetchBridgeJson("/session/toggle", { method: "POST", body: "{}" });
+    await refreshBridgeStateCache();
   } catch (error) {
     appendGuiLog("ERROR", `Background toggle failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    sessionToggleInFlight = false;
   }
 }
 
@@ -469,15 +563,30 @@ function ensureMainWindowSize() {
   }
 }
 
+function applyWindowsWindowIcon() {
+  if (process.platform !== "win32" || !mainWindow?.ptr) {
+    return;
+  }
+
+  try {
+    native.symbols.setWindowIcon(mainWindow.ptr, toCString(APP_WINDOW_ICON_PATH));
+  } catch (error) {
+    appendGuiLog("WARN", `Failed to set window icon: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function showMainWindow() {
   ensureMainWindowSize();
+  if (mainWindow?.isMinimized()) {
+    mainWindow.unminimize();
+  }
   mainWindow?.show();
   mainWindow?.focus();
 }
 
 async function triggerHotkeyCallback() {
   appendGuiLog("INFO", `Hotkey callback invoked: ${HOTKEY}`);
-  await toggleFromBackground();
+  await toggleFromBackground("hotkey");
 }
 
 function triggerQuit(action: string) {
@@ -492,7 +601,7 @@ async function handleTrayAction(action: string, source: "tray" | "automation") {
       showMainWindow();
       break;
     case "toggle":
-      await toggleFromBackground();
+      await toggleFromBackground(source);
       break;
     case "quit":
       triggerQuit(source === "automation" ? "automation:tray/quit" : "tray-quit");
@@ -514,15 +623,19 @@ async function runAutomationAction(action: AutomationActionId): Promise<Automati
       break;
     case "start-recording":
       await fetchBridgeJson("/session/start", { method: "POST", body: "{}" });
+      await refreshBridgeStateCache();
       break;
     case "stop-recording":
       await fetchBridgeJson("/session/stop", { method: "POST", body: "{}" });
+      await refreshBridgeStateCache();
       break;
     case "toggle-recording":
       await fetchBridgeJson("/session/toggle", { method: "POST", body: "{}" });
+      await refreshBridgeStateCache();
       break;
     case "clear-history":
       await fetchBridgeJson("/session/clear-history", { method: "POST", body: "{}" });
+      await refreshBridgeStateCache();
       break;
     case "tray/toggle":
       await handleTrayAction("toggle", "automation");
@@ -633,6 +746,7 @@ if (!registeredHotkey) {
   appendGuiLog("INFO", `Global hotkey registered: ${HOTKEY}`);
 }
 
+startBridgePolling();
 startAutomationServer();
 
 appendGuiLog("INFO", "Parakeet desktop app started");

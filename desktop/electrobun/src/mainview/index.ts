@@ -32,6 +32,7 @@ type BridgeViewState = {
   bridgeUrl: string;
   bridgeStartCommand: string;
   hotkey: string;
+  hotkeyRegistered: boolean;
   connected: boolean;
   session: SessionPayload;
 };
@@ -54,6 +55,7 @@ type RendererAutomationSnapshot = {
 };
 
 type RendererAutomationActionId = "toggle-recording";
+type SessionCueKind = "start" | "complete";
 
 type DesktopRPC = {
   bun: {
@@ -74,6 +76,7 @@ type DesktopRPC = {
     requests: {
       getAutomationSnapshot: { params: {}; response: RendererAutomationSnapshot };
       runAutomationAction: { params: { action: RendererAutomationActionId }; response: RendererAutomationSnapshot };
+      playSessionCue: { params: { kind: SessionCueKind }; response: { success: true } };
     };
     messages: {};
   };
@@ -90,6 +93,11 @@ const rpc = Electroview.defineRPC<DesktopRPC>({
             await toggleRecording();
             return buildRendererAutomationSnapshot(currentState);
         }
+      },
+      playSessionCue: async ({ kind }) => {
+        await primeSessionAudio();
+        playSessionCue(kind);
+        return { success: true } as const;
       },
     },
     messages: {},
@@ -132,6 +140,14 @@ let historyClearedAfter: number | null = null;
 const copiedHistoryIds = new Set<string>();
 const copiedHistoryTimers = new Map<string, number>();
 let sessionAudioContext: AudioContext | null = null;
+const sessionCueAudio: Record<SessionCueKind, HTMLAudioElement> = {
+  start: new Audio("assets/session-start.wav"),
+  complete: new Audio("assets/session-complete.wav"),
+};
+for (const audio of Object.values(sessionCueAudio)) {
+  audio.preload = "auto";
+  audio.volume = 1;
+}
 
 function formatTimestamp(timestamp: number | null): string {
   if (!timestamp) return "—";
@@ -215,53 +231,58 @@ async function primeSessionAudio(): Promise<void> {
   }
 }
 
-function playSessionCue(kind: "start" | "stop") {
+function playSessionCue(kind: SessionCueKind) {
   void playSessionCueAsync(kind);
 }
 
-async function playSessionCueAsync(kind: "start" | "stop"): Promise<void> {
+async function playSessionCueAsync(kind: SessionCueKind): Promise<void> {
   const context = getSessionAudioContext();
-  if (!context) return;
-  if (context.state === "suspended") {
-    try {
-      await context.resume();
-    } catch {
+  if (context) {
+    if (context.state === "suspended") {
+      try {
+        await context.resume();
+      } catch {
+        // fall through to audio-element fallback
+      }
+    }
+
+    if (context.state === "running") {
+      const startAt = context.currentTime + 0.003;
+      const firstFrequency = kind === "start" ? 880 : 740;
+      const secondFrequency = kind === "start" ? 1320 : 494;
+      const pulseGap = 0.13;
+      const pulseDuration = 0.1;
+      const peakGain = kind === "start" ? 0.62 : 0.56;
+
+      for (let pulseIndex = 0; pulseIndex < 2; pulseIndex += 1) {
+        const pulseStart = startAt + (pulseIndex * pulseGap);
+        const pulseEnd = pulseStart + pulseDuration;
+        const oscillator = context.createOscillator();
+        const gainNode = context.createGain();
+
+        oscillator.type = "square";
+        oscillator.frequency.setValueAtTime(pulseIndex === 0 ? firstFrequency : secondFrequency, pulseStart);
+
+        gainNode.gain.setValueAtTime(0.0001, pulseStart);
+        gainNode.gain.exponentialRampToValueAtTime(peakGain, pulseStart + 0.006);
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, pulseEnd);
+
+        oscillator.connect(gainNode);
+        gainNode.connect(context.destination);
+        oscillator.start(pulseStart);
+        oscillator.stop(pulseEnd + 0.01);
+      }
       return;
     }
   }
 
-  const startAt = context.currentTime + 0.01;
-  const firstFrequency = kind === "start" ? 880 : 740;
-  const secondFrequency = kind === "start" ? 1320 : 494;
-  const pulseGap = 0.16;
-  const pulseDuration = 0.12;
-  const peakGain = kind === "start" ? 0.42 : 0.38;
-
-  for (let pulseIndex = 0; pulseIndex < 2; pulseIndex += 1) {
-    const pulseStart = startAt + (pulseIndex * pulseGap);
-    const pulseEnd = pulseStart + pulseDuration;
-    const oscillator = context.createOscillator();
-    const gainNode = context.createGain();
-
-    oscillator.type = "square";
-    oscillator.frequency.setValueAtTime(pulseIndex === 0 ? firstFrequency : secondFrequency, pulseStart);
-
-    gainNode.gain.setValueAtTime(0.0001, pulseStart);
-    gainNode.gain.exponentialRampToValueAtTime(peakGain, pulseStart + 0.01);
-    gainNode.gain.exponentialRampToValueAtTime(0.0001, pulseEnd);
-
-    oscillator.connect(gainNode);
-    gainNode.connect(context.destination);
-    oscillator.start(pulseStart);
-    oscillator.stop(pulseEnd + 0.01);
-  }
-}
-
-function emitSessionStateCue(previousState: SessionStatus, nextState: SessionStatus) {
-  if (previousState !== "recording" && nextState === "recording") {
-    playSessionCue("start");
-  } else if (previousState === "recording" && nextState !== "recording") {
-    playSessionCue("stop");
+  const fallback = sessionCueAudio[kind].cloneNode(true) as HTMLAudioElement;
+  fallback.volume = 1;
+  fallback.currentTime = 0;
+  try {
+    await fallback.play();
+  } catch {
+    return;
   }
 }
 
@@ -360,6 +381,7 @@ function buildStateSignature(viewState: BridgeViewState): string {
     bridgeUrl: viewState.bridgeUrl,
     bridgeStartCommand: viewState.bridgeStartCommand,
     hotkey: viewState.hotkey,
+    hotkeyRegistered: viewState.hotkeyRegistered,
     session: viewState.session,
     historyClearedAfter,
     visibleHistoryCount,
@@ -423,7 +445,6 @@ function renderHistory(items: TranscriptHistoryItem[]) {
 function renderState(viewState: BridgeViewState) {
   const previousState = currentState;
   const previousFilteredCount = getFilteredHistory(previousState).length;
-  const previousSessionState: SessionStatus = previousState?.connected ? previousState.session.state : "offline";
   const nextFilteredHistory = getFilteredHistory(viewState);
   if (nextFilteredHistory.length > previousFilteredCount) {
     visibleHistoryCount = Math.max(visibleHistoryCount, 10);
@@ -431,7 +452,6 @@ function renderState(viewState: BridgeViewState) {
 
   currentState = viewState;
   const sessionState: SessionStatus = viewState.connected ? viewState.session.state : "offline";
-  emitSessionStateCue(previousSessionState, sessionState);
   statusBadge.textContent = viewState.connected ? viewState.session.state : "Disconnected";
   statusBadge.className = `badge ${sessionState}`;
 
@@ -579,7 +599,7 @@ showMoreButton.addEventListener("click", () => {
 window.addEventListener("keydown", (event) => {
   void primeSessionAudio();
   const pressedR = event.key.toLowerCase() === "r";
-  if (pressedR && event.ctrlKey && event.altKey) {
+  if (pressedR && event.ctrlKey && event.altKey && currentState && !currentState.hotkeyRegistered) {
     event.preventDefault();
     void toggleRecording();
   }

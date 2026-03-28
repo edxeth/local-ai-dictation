@@ -18,7 +18,7 @@
   --success: #a7d58c;
   --shadow: 0 28px 70px rgba(0, 0, 0, 0.48);
   font-family: "Bahnschrift", "Aptos", "Segoe UI Variable Text", "Segoe UI", sans-serif;
-  background: var(--bg);
+  background: transparent;
   color: var(--text);
 }
 
@@ -36,37 +36,8 @@ body {
 body {
   position: relative;
   overflow: hidden;
-  padding: 0;
-  background:
-    radial-gradient(circle at top left, rgba(255, 122, 77, 0.16), transparent 30%),
-    radial-gradient(circle at 82% 12%, rgba(214, 168, 98, 0.16), transparent 24%),
-    linear-gradient(160deg, #060504 0%, #100b07 44%, #080604 100%);
-}
-
-body::before,
-body::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-body::before {
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px);
-  background-size: 24px 24px;
-  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent 92%);
-  opacity: 0.22;
-}
-
-body::after {
-  background:
-    radial-gradient(circle at center, rgba(255, 255, 255, 0.05) 0 0.9px, transparent 1px 100%),
-    radial-gradient(circle at top, rgba(255, 241, 220, 0.06), transparent 62%);
-  background-size: 9px 9px, auto;
-  mix-blend-mode: soft-light;
-  opacity: 0.12;
+  padding: 8px;
+  background: var(--bg);
 }
 
 button,
@@ -82,8 +53,44 @@ select {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: 100vh;
-  padding: 12px 18px 18px 20px;
+  height: calc(100vh - 16px);
+  padding: 8px 12px 12px;
+  border-radius: 24px;
+  border: 1px solid rgba(225, 188, 118, 0.24);
+  background:
+    radial-gradient(circle at top left, rgba(255, 122, 77, 0.16), transparent 30%),
+    radial-gradient(circle at 82% 12%, rgba(214, 168, 98, 0.16), transparent 24%),
+    linear-gradient(160deg, #060504 0%, #100b07 44%, #080604 100%);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px rgba(255, 244, 229, 0.04);
+  overflow: hidden;
+}
+
+.window-shell::before,
+.window-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.window-shell::before {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent 92%);
+  opacity: 0.22;
+}
+
+.window-shell::after {
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.05) 0 0.9px, transparent 1px 100%),
+    radial-gradient(circle at top, rgba(255, 241, 220, 0.06), transparent 62%);
+  background-size: 9px 9px, auto;
+  mix-blend-mode: soft-light;
+  opacity: 0.12;
 }
 
 .app {
@@ -207,22 +214,7 @@ h1 {
 }
 
 .titlebar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-  max-width: 1080px;
-  margin: 0 auto;
-  min-height: 56px;
-  padding: 10px 12px 10px 14px;
-  border-radius: 18px;
-  border: 1px solid var(--line);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 18%),
-    linear-gradient(135deg, rgba(255, 122, 77, 0.07), transparent 44%),
-    rgba(19, 14, 10, 0.94);
-  box-shadow: 0 22px 52px rgba(0, 0, 0, 0.34);
+  display: none;
 }
 
 .titlebar-brand,

@@ -23,6 +23,8 @@ export default {
       "src/mainview/index.css": "views/mainview/index.css",
       "src/mainview/assets/parakeet-icon.svg": "views/mainview/assets/parakeet-icon.svg",
       "src/mainview/assets/parakeet-icon.png": "views/mainview/assets/parakeet-icon.png",
+      "src/mainview/assets/session-start.wav": "views/mainview/assets/session-start.wav",
+      "src/mainview/assets/session-complete.wav": "views/mainview/assets/session-complete.wav",
     },
     mac: {
       bundleCEF: false,
