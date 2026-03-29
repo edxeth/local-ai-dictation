@@ -10,8 +10,10 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Callable
+import zipfile
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -274,6 +276,61 @@ def embed_windows_exe_icon(executable_path: Path, icon_path: Path, rcedit_path: 
         raise DesktopAppError(detail or f"Failed to embed icon into {executable_path}")
 
 
+def rebuild_windows_setup_archive_with_icons(archive_path: Path, icon_path: Path, rcedit_path: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="parakeet-icon-archive-") as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        completed = subprocess.run(
+            ["tar", "--zstd", "-xf", str(archive_path), "-C", str(temp_dir)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise DesktopAppError(detail or f"Failed to extract {archive_path}")
+
+        extracted_roots = [path for path in temp_dir.iterdir() if path.is_dir()]
+        if len(extracted_roots) != 1:
+            raise DesktopAppError(f"Unexpected archive layout in {archive_path}")
+        extracted_root = extracted_roots[0]
+
+        for target in (extracted_root / "bin" / "launcher.exe", extracted_root / "bin" / "bun.exe"):
+            if target.exists():
+                embed_windows_exe_icon(target, icon_path, rcedit_path)
+
+        rebuilt_archive_path = temp_dir / archive_path.name
+        completed = subprocess.run(
+            ["tar", "--zstd", "-cf", str(rebuilt_archive_path), "-C", str(temp_dir), extracted_root.name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise DesktopAppError(detail or f"Failed to rebuild {archive_path}")
+
+        shutil.move(str(rebuilt_archive_path), str(archive_path))
+
+
+def rebuild_windows_artifact_zip(app_dir: Path) -> None:
+    artifacts_dir = app_dir / "artifacts"
+    zip_path = next(artifacts_dir.glob("stable-win-x64-*-Setup.zip"), None)
+    if zip_path is None:
+        return
+
+    build_dir = app_dir / "build" / "stable-win-x64"
+    installer_path = next(build_dir.glob("*-Setup.exe"), None)
+    metadata_path = next(build_dir.glob("*-Setup.metadata.json"), None)
+    archive_path = next(build_dir.glob("*-Setup.tar.zst"), None)
+    if installer_path is None or metadata_path is None or archive_path is None:
+        return
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.write(metadata_path, f".installer\\{metadata_path.name}")
+        bundle.write(archive_path, f".installer\\{archive_path.name}")
+        bundle.write(installer_path, installer_path.name)
+
+
 def apply_windows_packaged_icon_workaround(app_dir: Path) -> None:
     icon_path = app_dir / "src" / "mainview" / "assets" / "parakeet-icon.ico"
     rcedit_path = app_dir / "node_modules" / "rcedit" / "bin" / "rcedit-x64.exe"
@@ -282,7 +339,15 @@ def apply_windows_packaged_icon_workaround(app_dir: Path) -> None:
         return
 
     targets: list[Path] = []
-    targets.extend(sorted((build_dir / "parakeet-desktop" / "bin").glob("*.exe")))
+    bundle_bin_dir = build_dir / "parakeet-desktop" / "bin"
+    targets.extend(sorted(bundle_bin_dir.glob("*.exe")))
+    targets.extend(
+        [
+            bundle_bin_dir / "launcher",
+            bundle_bin_dir / "launcher.exe",
+            bundle_bin_dir / "bun.exe",
+        ]
+    )
     targets.extend(sorted(build_dir.glob("*.exe")))
 
     seen: set[Path] = set()
@@ -290,6 +355,11 @@ def apply_windows_packaged_icon_workaround(app_dir: Path) -> None:
         if target.exists() and target not in seen:
             embed_windows_exe_icon(target, icon_path, rcedit_path)
             seen.add(target)
+
+    archive_path = next(build_dir.glob("*-Setup.tar.zst"), None)
+    if archive_path is not None:
+        rebuild_windows_setup_archive_with_icons(archive_path, icon_path, rcedit_path)
+        rebuild_windows_artifact_zip(app_dir)
 
 
 def _read_package_metadata(metadata_path: Path) -> dict[str, Any]:

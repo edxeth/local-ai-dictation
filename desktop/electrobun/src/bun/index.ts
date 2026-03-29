@@ -1,6 +1,7 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { FFIType, dlopen } from "bun:ffi";
 import { BrowserView, BrowserWindow, GlobalShortcut, Tray, type RPCSchema } from "electrobun/bun";
 import { native, toCString } from "../../node_modules/electrobun/dist/api/bun/proc/native";
 
@@ -152,6 +153,33 @@ const GUI_STARTUP_DIAGNOSTICS_PATH = Bun.env.PARAKEET_GUI_STARTUP_DIAGNOSTICS_PA
 const GUI_AUTO_EXIT_MS = Number(Bun.env.PARAKEET_GUI_AUTO_EXIT_MS || "0") || 0;
 const APP_ICON_URL = "views://mainview/assets/parakeet-icon.png";
 const APP_WINDOW_ICON_PATH = join(import.meta.dir, "..", "..", "app.ico");
+
+const SND_ASYNC = 0x0001;
+const SND_NODEFAULT = 0x0002;
+const SND_FILENAME = 0x00020000;
+
+const nativeSoundPlayer = process.platform === "win32"
+  ? dlopen("winmm.dll", {
+      PlaySoundA: {
+        args: [FFIType.cstring, FFIType.ptr, FFIType.u32],
+        returns: FFIType.bool,
+      },
+    })
+  : null;
+
+function resolveSessionCueAssetPath(kind: SessionCueKind): string | null {
+  const filename = kind === "start" ? "session-start.wav" : "session-complete.wav";
+  const candidates = [
+    join(import.meta.dir, "..", "mainview", "assets", filename),
+    join(import.meta.dir, "..", "views", "mainview", "assets", filename),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
 const emptySession = (): SessionPayload => ({
   schema_version: 1,
   state: "stopped",
@@ -281,7 +309,35 @@ const HOTKEY_COOLDOWN_MS = 450;
 let lastObservedSessionState: SessionPayload["state"] | "offline" = "offline";
 let lastObservedCompletionAt: number | null = null;
 
+function playNativeSessionCue(kind: SessionCueKind): boolean {
+  if (process.platform !== "win32" || !nativeSoundPlayer) {
+    return false;
+  }
+
+  const assetPath = resolveSessionCueAssetPath(kind);
+  if (!assetPath) {
+    appendGuiLog("WARN", `Session cue asset missing for ${kind}`);
+    return false;
+  }
+
+  try {
+    const started = nativeSoundPlayer.symbols.PlaySoundA(toCString(assetPath), null, SND_ASYNC | SND_NODEFAULT | SND_FILENAME);
+    if (!started) {
+      appendGuiLog("WARN", `Native PlaySound failed for ${kind}`);
+      return false;
+    }
+    appendGuiLog("INFO", `Playing ${kind} cue natively`);
+    return true;
+  } catch (error) {
+    appendGuiLog("WARN", `Failed to play ${kind} cue natively: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
 async function requestRendererSessionCue(kind: "start" | "complete") {
+  if (playNativeSessionCue(kind)) {
+    return;
+  }
   if (!startupDiagnostics.rendererRpcReady || !mainWindow?.webview.rpc) {
     return;
   }
