@@ -231,6 +231,16 @@ def test_build_bridge_controller_from_namespace_reads_e2e_env():
     controller.shutdown()
 
 
+
+def test_build_bridge_controller_from_namespace_parses_numeric_input_device():
+    namespace = type("Namespace", (), {"cpu": False, "clipboard": True, "input_device": "7"})()
+
+    controller = bridge_module.build_bridge_controller_from_namespace(namespace, env={})
+
+    assert controller.get_session_payload()["config"]["input_device"] == 7
+    controller.shutdown()
+
+
 def test_bridge_cli_e2e_mode_exposes_deterministic_session_flow():
     port = _reserve_local_port()
     env = os.environ.copy()

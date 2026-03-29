@@ -40,7 +40,7 @@ class _FakeStream:
         self.close_called = False
 
     def read(self, frame_samples: int, exception_on_overflow: bool = False) -> bytes:
-        assert frame_samples == VAD_FRAME_SAMPLES
+        assert frame_samples in {1024, VAD_FRAME_SAMPLES}
         if self._index >= len(self._frames):
             return self._frames[-1]
         frame = self._frames[self._index]
@@ -71,6 +71,7 @@ class _FakePyAudioModule:
     def __init__(self, stream: _FakeStream):
         self._stream = stream
         self.open_kwargs: dict[str, object] | None = None
+        self.open_calls: list[dict[str, object]] = []
         self.terminated = False
 
     def PyAudio(self):
@@ -78,10 +79,51 @@ class _FakePyAudioModule:
 
     def open(self, **kwargs):
         self.open_kwargs = kwargs
+        self.open_calls.append(kwargs)
         return self._stream
 
     def terminate(self) -> None:
         self.terminated = True
+
+
+class _FallbackPyAudioModule(_FakePyAudioModule):
+    def __init__(self, stream: _FakeStream):
+        super().__init__(stream)
+        self._devices = [
+            {
+                "index": 0,
+                "name": "pulse",
+                "maxInputChannels": 32,
+                "defaultSampleRate": 44100,
+                "hostApi": 0,
+            },
+            {
+                "index": 1,
+                "name": "default",
+                "maxInputChannels": 32,
+                "defaultSampleRate": 44100,
+                "hostApi": 0,
+            },
+        ]
+
+    def open(self, **kwargs):
+        self.open_kwargs = kwargs
+        self.open_calls.append(kwargs)
+        if len(self.open_calls) == 1 and kwargs.get("input_device_index") is None:
+            raise OSError(-9996, "Invalid input device (no default output device)")
+        return self._stream
+
+    def get_device_count(self) -> int:
+        return len(self._devices)
+
+    def get_device_info_by_index(self, index: int) -> dict:
+        return self._devices[index]
+
+    def get_host_api_info_by_index(self, index: int) -> dict:
+        return {"name": "ALSA"}
+
+    def get_default_input_device_info(self) -> dict:
+        return {"index": 1}
 
 
 SPEECH_FRAME = b"\x01\x00" * (VAD_FRAME_BYTES // 2)
@@ -176,3 +218,42 @@ def test_dictation_recording_uses_vad_backend_when_enabled(monkeypatch):
     assert stream.stop_called is True
     assert stream.close_called is True
     assert pyaudio_module.terminated is True
+
+
+
+def test_dictation_recording_falls_back_to_explicit_pulse_device_when_default_device_is_broken():
+    dictation_module._shutdown_event.clear()
+    stream = _FakeStream([b"\x00\x00" * 1024])
+    pyaudio_module = _FallbackPyAudioModule(stream)
+    config = DictationConfig(clipboard=False)
+
+    audio_data = dictation_module.record_audio_interruptible(
+        config,
+        pyaudio_module,
+        stop_requested=_ManualStopAfter(1),
+    )
+
+    assert audio_data == b"\x00\x00" * 1024
+    assert pyaudio_module.open_calls[0]["input_device_index"] is None
+    assert pyaudio_module.open_calls[1]["input_device_index"] == 0
+    assert stream.stop_called is True
+    assert stream.close_called is True
+    assert pyaudio_module.terminated is True
+
+
+
+def test_dictation_recording_resolves_named_input_device():
+    dictation_module._shutdown_event.clear()
+    stream = _FakeStream([b"\x00\x00" * 1024])
+    pyaudio_module = _FallbackPyAudioModule(stream)
+    config = DictationConfig(input_device="pulse", clipboard=False)
+
+    audio_data = dictation_module.record_audio_interruptible(
+        config,
+        pyaudio_module,
+        stop_requested=_ManualStopAfter(1),
+    )
+
+    assert audio_data == b"\x00\x00" * 1024
+    assert len(pyaudio_module.open_calls) == 1
+    assert pyaudio_module.open_calls[0]["input_device_index"] == 0

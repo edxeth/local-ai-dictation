@@ -21,6 +21,8 @@ wheelhouse/
 .idea/
 .DS_Store
 Thumbs.db
+.pi/
+.ralph/
 
 # Logs/Artifacts
 *.log

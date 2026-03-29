@@ -555,6 +555,19 @@ def _env_int(name: str, env: Mapping[str, str], default: int) -> int:
     return int(value)
 
 
+
+def _parse_input_device(value: Any) -> int | str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
 def make_bridge_server(
     host: str,
     port: int,
@@ -573,7 +586,7 @@ def build_bridge_controller_from_namespace(
     source_env = os.environ if env is None else env
     return DictationBridgeController(
         cpu=bool(getattr(namespace, "cpu", False)),
-        input_device=getattr(namespace, "input_device", None),
+        input_device=_parse_input_device(getattr(namespace, "input_device", None)),
         vad=bool(getattr(namespace, "vad", False)),
         max_silence_ms=int(getattr(namespace, "max_silence_ms", 1200)),
         min_speech_ms=int(getattr(namespace, "min_speech_ms", 300)),

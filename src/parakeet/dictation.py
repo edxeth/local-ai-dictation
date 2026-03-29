@@ -20,7 +20,14 @@ import wave
 from contextlib import nullcontext
 from typing import Any, Callable, cast
 
-from parakeet.audio import VAD_FRAME_SAMPLES, build_vad_backend, list_input_devices, record_until_vad_stop
+from parakeet.audio import (
+    VAD_FRAME_SAMPLES,
+    build_vad_backend,
+    fallback_input_device_id,
+    list_input_devices,
+    record_until_vad_stop,
+    resolve_input_device_id,
+)
 from parakeet.config import resolve_config
 from parakeet.errors import (
     AUDIO_BACKEND_UNREACHABLE,
@@ -331,6 +338,12 @@ def list_devices(pyaudio_module: Any) -> int:
         return int(ExitCode.ERROR)
 
 
+def _looks_like_missing_default_output_device(exc: Exception) -> bool:
+    lowered = str(exc).lower()
+    return "no default output device" in lowered or "default output device" in lowered
+
+
+
 def record_audio_interruptible(
     config: DictationConfig,
     pyaudio_module: Any,
@@ -341,6 +354,13 @@ def record_audio_interruptible(
 ) -> bytes | None:
     status_stream = status_stream or _status_stream(config)
     frames_per_buffer = VAD_FRAME_SAMPLES if config.vad else 1024
+    try:
+        requested_input_device_id = resolve_input_device_id(config.input_device, pyaudio_module)
+    except ValueError as exc:
+        error = AudioError(AUDIO_BACKEND_UNREACHABLE, str(exc))
+        print(f"❌ Audio error: {error}", file=status_stream)
+        return None
+
     ctx = SilentSTDERR() if not config.debug else nullcontext()
     with ctx:
         pa = pyaudio_module.PyAudio()
@@ -350,17 +370,41 @@ def record_audio_interruptible(
                 channels=1,
                 rate=sample_rate,
                 input=True,
-                input_device_index=config.input_device if isinstance(config.input_device, int) else None,
+                input_device_index=requested_input_device_id,
                 frames_per_buffer=frames_per_buffer,
             )
         except Exception as exc:
-            error = AudioError(AUDIO_BACKEND_UNREACHABLE, str(exc))
-            print(f"❌ Audio error: {error}", file=status_stream)
-            try:
-                pa.terminate()
-            except Exception:
-                pass
-            return None
+            if requested_input_device_id is None and _looks_like_missing_default_output_device(exc):
+                try:
+                    fallback_devices = list_input_devices(pyaudio_module)
+                    fallback_device_id = fallback_input_device_id(fallback_devices)
+                    if fallback_device_id is not None:
+                        stream = pa.open(
+                            format=pyaudio_module.paInt16,
+                            channels=1,
+                            rate=sample_rate,
+                            input=True,
+                            input_device_index=fallback_device_id,
+                            frames_per_buffer=frames_per_buffer,
+                        )
+                    else:
+                        raise exc
+                except Exception:
+                    error = AudioError(AUDIO_BACKEND_UNREACHABLE, str(exc))
+                    print(f"❌ Audio error: {error}", file=status_stream)
+                    try:
+                        pa.terminate()
+                    except Exception:
+                        pass
+                    return None
+            else:
+                error = AudioError(AUDIO_BACKEND_UNREACHABLE, str(exc))
+                print(f"❌ Audio error: {error}", file=status_stream)
+                try:
+                    pa.terminate()
+                except Exception:
+                    pass
+                return None
 
     audio_data: bytes | None = None
     print("🎤 Recording...", file=status_stream, flush=True)

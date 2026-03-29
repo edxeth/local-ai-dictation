@@ -96,6 +96,37 @@ def list_input_devices(pyaudio_module: PyAudioModule | None = None) -> list[Audi
         pa.terminate()
 
 
+def resolve_input_device_id(
+    input_device: int | str | None,
+    pyaudio_module: PyAudioModule | None = None,
+) -> int | None:
+    if input_device is None:
+        return None
+    if isinstance(input_device, int):
+        return input_device
+
+    requested_name = str(input_device).strip()
+    if not requested_name:
+        return None
+
+    for device in list_input_devices(pyaudio_module):
+        if device.name == requested_name:
+            return device.id
+
+    raise ValueError(f"No input device named {requested_name!r}")
+
+
+def fallback_input_device_id(devices: list[AudioDevice]) -> int | None:
+    if not devices:
+        return None
+
+    for device in devices:
+        if device.name.strip().lower() not in {"default", "sysdefault"}:
+            return device.id
+
+    return devices[0].id
+
+
 _CONNECTION_FAILURE_MARKERS = (
     "connection refused",
     "connection failure",
