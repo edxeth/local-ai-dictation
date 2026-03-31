@@ -130,11 +130,62 @@ def ensure_gui_dependencies(app_dir: Path, bun_path: str) -> None:
         raise DesktopAppError("Failed to install Parakeet GUI dependencies with `bun install`.")
 
 
-def build_gui_environment(host: str, port: int) -> dict[str, str]:
+def default_gui_log_dir(env: dict[str, str] | None = None) -> Path | None:
+    source = os.environ if env is None else env
+    local_appdata = source.get("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / "parakeet.desktop.local" / "stable" / "logs"
+    xdg_state_home = source.get("XDG_STATE_HOME")
+    if xdg_state_home:
+        return Path(xdg_state_home) / "parakeet" / "desktop"
+    home = source.get("HOME")
+    if home:
+        return Path(home) / ".local" / "state" / "parakeet" / "desktop"
+    return None
+
+
+def build_gui_environment(
+    host: str,
+    port: int,
+    *,
+    bridge_command: str | None = None,
+    hotkey: str | None = None,
+) -> dict[str, str]:
     env = os.environ.copy()
     env["PARAKEET_BRIDGE_URL"] = bridge_url(host, port)
-    env["PARAKEET_BRIDGE_COMMAND"] = bridge_start_command(host, port)
+    env["PARAKEET_BRIDGE_COMMAND"] = bridge_start_command(host, port) if bridge_command is None else bridge_command
+    if hotkey:
+        env["PARAKEET_HOTKEY"] = hotkey
+    log_dir = default_gui_log_dir(env)
+    if log_dir is not None:
+        env.setdefault("PARAKEET_GUI_LOG_PATH", str(log_dir / "startup.log"))
+        env.setdefault("PARAKEET_GUI_STARTUP_DIAGNOSTICS_PATH", str(log_dir / "startup-diagnostics.json"))
     return env
+
+
+def ensure_bun_available() -> str:
+    bun_path = shutil.which("bun")
+    if bun_path is None:
+        raise DesktopAppError("Native GUI launch requires `bun` to be installed and available on PATH.")
+    return bun_path
+
+
+def run_gui_command(namespace: Any) -> int:
+    app_dir = ensure_desktop_app_available()
+    bun_path = ensure_bun_available()
+    ensure_gui_dependencies(app_dir, bun_path)
+    completed = subprocess.run(
+        [bun_path, "run", "start"],
+        cwd=app_dir,
+        env=build_gui_environment(
+            str(getattr(namespace, "host", DEFAULT_BRIDGE_HOST)),
+            int(getattr(namespace, "port", DEFAULT_BRIDGE_PORT)),
+            bridge_command=getattr(namespace, "bridge_command", None),
+            hotkey=getattr(namespace, "hotkey", None),
+        ),
+        check=False,
+    )
+    return int(completed.returncode)
 
 
 def bridge_healthy(host: str, port: int, *, timeout: float = 1.0) -> bool:
@@ -1030,7 +1081,7 @@ def run_gui_package_bridge_recovery_command(namespace: Any) -> int:
                 and snapshot.get("toggleButtonText") == "Bridge offline"
                 and snapshot.get("bridgeUrl") == expected_bridge_url
                 and snapshot.get("bridgeCommand") == expected_bridge_command
-                and "Start the WSL bridge command below" in str(snapshot.get("statusLine", ""))
+                and "Start the bridge command below" in str(snapshot.get("statusLine", ""))
             )
 
         initial_state = wait_for_gui_e2e_state(

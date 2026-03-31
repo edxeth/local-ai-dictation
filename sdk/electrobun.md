@@ -17,9 +17,9 @@ Key files:
 - `desktop/electrobun/src/bun/index.ts` — creates the window, tray, global hotkey, startup diagnostics, and E2E automation surface
 - `desktop/electrobun/src/mainview/index.ts` — renderer UI and renderer snapshot/test hooks
 - `desktop/electrobun/package.json` — Electrobun package plus `bun run check`
-- `desktop/electrobun/electrobun.config.ts` — Windows/WebView2-oriented build config
-- `src/parakeet/desktop.py` — WSL-side staging, Windows packaging, packaged-app smoke, and unattended verify entrypoints
-- `src/parakeet/cli.py` — exposes `gui-package*` commands
+- `desktop/electrobun/electrobun.config.ts` — cross-platform Electrobun build config
+- `src/parakeet/desktop.py` — native GUI launch plus WSL-side staging, Windows packaging, packaged-app smoke, and unattended verify entrypoints
+- `src/parakeet/cli.py` — exposes `gui` and `gui-package*` commands
 
 Current bridge assumptions:
 - GUI reads `PARAKEET_BRIDGE_URL`
@@ -28,9 +28,10 @@ Current bridge assumptions:
 
 ## Supported topology and boundaries
 
-Supported first release:
+Supported in this repo:
+- native Linux Electrobun GUI over localhost
 - packaged Windows 11 x64 Electrobun GUI
-- `parakeet bridge` running separately inside WSL over `127.0.0.1`
+- `parakeet bridge` running separately inside WSL over `127.0.0.1` for the Windows workflow
 - WebView2 renderer on Windows
 
 Not supported in this release:
@@ -91,13 +92,11 @@ Meaning:
 
 ## Development vs release workflow
 
-Development inside Linux/WSL can still use:
+Development inside Linux/WSL can use:
 - `parakeet gui`
-- `parakeet gui --bridge`
-- `parakeet full`
 - `cd desktop/electrobun && bun install && bun run start`
 
-Those commands are for local dev ergonomics. The supported release workflow for Windows users is the packaged app path driven by `gui-package` and verified by `gui-package-verify`.
+Those commands are for local dev ergonomics. The supported packaged Windows workflow is still driven by `gui-package` and verified by `gui-package-verify`.
 
 ## Useful upstream docs
 

@@ -146,7 +146,11 @@ const GUI_E2E_ENABLED = Bun.env.PARAKEET_GUI_E2E === "1";
 const GUI_E2E_PORT = Number(Bun.env.PARAKEET_GUI_E2E_PORT || "0") || 0;
 const DEFAULT_STARTUP_LOG_DIR = Bun.env.LOCALAPPDATA
   ? join(Bun.env.LOCALAPPDATA, "parakeet.desktop.local", "stable", "logs")
-  : "";
+  : Bun.env.XDG_STATE_HOME
+    ? join(Bun.env.XDG_STATE_HOME, "parakeet", "desktop")
+    : Bun.env.HOME
+      ? join(Bun.env.HOME, ".local", "state", "parakeet", "desktop")
+      : "";
 const GUI_LOG_PATH = Bun.env.PARAKEET_GUI_LOG_PATH || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup.log") : "");
 const GUI_STARTUP_DIAGNOSTICS_PATH = Bun.env.PARAKEET_GUI_STARTUP_DIAGNOSTICS_PATH
   || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup-diagnostics.json") : "");

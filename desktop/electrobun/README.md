@@ -1,6 +1,6 @@
 # Parakeet Electrobun Desktop App
 
-Small Windows desktop control surface for `parakeet bridge`, with the supported release topology of packaged Windows GUI + WSL bridge.
+Small desktop control surface for `parakeet bridge`, with native Linux support and an optional packaged Windows GUI + WSL bridge workflow.
 
 ## What it does
 
@@ -8,14 +8,37 @@ Small Windows desktop control surface for `parakeet bridge`, with the supported 
 - starts/stops recording from a small window
 - registers a global hotkey
 - plays a short sound when recording starts and another when recording stops
-- displays the latest transcript returned by the WSL bridge
+- displays the latest transcript returned by the bridge
 - adds a tray menu for open/toggle/quit
 
 ## Startup model
 
-Only the packaged Windows workflow is supported for this desktop app.
+### Native Linux workflow
 
-### Supported packaged Windows workflow
+This workflow is distro-agnostic once Bun, WebKitGTK, Ayatana AppIndicator, GStreamer good plugins, and the Python dependencies are installed.
+
+Run these commands from the repo root:
+
+1. Start the bridge:
+
+```bash
+uv run parakeet bridge --host 127.0.0.1 --port 8765
+```
+
+2. Start the GUI in another terminal:
+
+```bash
+uv run parakeet gui --host 127.0.0.1 --port 8765 --bridge-command "uv run parakeet bridge --host 127.0.0.1 --port 8765"
+```
+
+For direct Bun iteration:
+
+```bash
+bun install
+bun run start
+```
+
+### Optional packaged Windows workflow
 
 Run these commands from the repo root in WSL:
 
@@ -46,7 +69,7 @@ This stages `desktop/electrobun/` to `%LOCALAPPDATA%\ParakeetDictation\staging\.
 ## Environment overrides
 
 - `PARAKEET_BRIDGE_URL` — default `http://127.0.0.1:8765`
-- `PARAKEET_BRIDGE_COMMAND` — command shown in the UI as the WSL bridge startup command
+- `PARAKEET_BRIDGE_COMMAND` — command shown in the UI as the bridge startup command
 - `PARAKEET_HOTKEY` — default `CommandOrControl+Alt+R`
 
 Example:
@@ -60,6 +83,7 @@ PARAKEET_HOTKEY="CommandOrControl+Alt+R" bun run start
 ```bash
 bun install
 bun run check
+uv run parakeet gui --help
 .venv/bin/python -m parakeet.cli gui-package --json
 .venv/bin/python -m parakeet.cli gui-package-verify --json --timeout-seconds 240
 ```
@@ -72,12 +96,13 @@ bun run check
 
 ## Notes
 
-- supported release target: Windows 11 x64 GUI + WSL bridge
+- supported native dev target: Linux desktop GUI + localhost bridge
+- supported packaged release target: Windows 11 x64 GUI + WSL bridge
 - WebView2 is required on Windows
 - native Windows backend execution is not supported in this release
 - ARM64-native packaging is not a supported target yet
 - the bridge is localhost-only
-- bridge startup stays user-controlled in the supported packaged workflow
+- bridge startup stays user-controlled on Linux and Windows
 - only one recording session is supported at a time
 - the bridge subprocess reuses the existing packaged `parakeet dictation` flow in JSON mode
 - if the bridge is offline, the desktop app stays usable and shows the command needed to start the backend

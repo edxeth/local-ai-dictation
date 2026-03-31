@@ -476,7 +476,7 @@ function renderState(viewState: BridgeViewState) {
 
   if (!viewState.connected) {
     toggleButton.textContent = "Bridge offline";
-    statusLine.textContent = "Start the WSL bridge command below, then use the button or hotkey.";
+    statusLine.textContent = "Start the bridge command below, then use the button or hotkey.";
   } else if (viewState.session.model_loading) {
     toggleButton.textContent = "Loading model…";
     statusLine.textContent = "Bridge is warming the model. Recording will unlock automatically when ready.";

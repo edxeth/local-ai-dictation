@@ -59,6 +59,23 @@ class _PopenFactory:
         return process
 
 
+def test_gui_subcommand_dispatches_to_desktop_runner(monkeypatch):
+    calls: list[SimpleNamespace] = []
+
+    def _fake_gui(namespace):
+        calls.append(namespace)
+        return 0
+
+    monkeypatch.setattr("parakeet.desktop.run_gui_command", _fake_gui)
+
+    assert main(["gui", "--host", "127.0.0.1", "--port", "8765", "--hotkey", "Super+R"]) == 0
+    assert len(calls) == 1
+    assert calls[0].command == "gui"
+    assert calls[0].host == "127.0.0.1"
+    assert calls[0].port == 8765
+    assert calls[0].hotkey == "Super+R"
+
+
 def test_gui_stage_subcommand_dispatches_to_desktop_stager(monkeypatch):
     calls: list[SimpleNamespace] = []
 
@@ -259,6 +276,49 @@ def test_gui_package_verify_subcommand_dispatches_to_desktop_runner(monkeypatch)
     assert calls[0].timeout_seconds == 25
 
 
+def test_build_gui_environment_sets_native_log_paths(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    env = desktop.build_gui_environment("127.0.0.1", 8765, hotkey="Super+R")
+
+    assert env["PARAKEET_BRIDGE_URL"] == "http://127.0.0.1:8765"
+    assert env["PARAKEET_BRIDGE_COMMAND"] == "parakeet bridge --host 127.0.0.1 --port 8765"
+    assert env["PARAKEET_HOTKEY"] == "Super+R"
+    assert env["PARAKEET_GUI_LOG_PATH"].endswith(".local/state/parakeet/desktop/startup.log")
+    assert env["PARAKEET_GUI_STARTUP_DIAGNOSTICS_PATH"].endswith(".local/state/parakeet/desktop/startup-diagnostics.json")
+
+
+def test_run_gui_command_launches_native_electrobun_app(monkeypatch, tmp_path: Path):
+    app_dir = tmp_path / "desktop" / "electrobun"
+    app_dir.mkdir(parents=True)
+    dependency_installs: list[tuple[Path, str]] = []
+    runs: list[tuple[list[str], Path, dict[str, str] | None]] = []
+
+    monkeypatch.setattr(desktop, "ensure_desktop_app_available", lambda: app_dir)
+    monkeypatch.setattr(desktop, "ensure_bun_available", lambda: "bun")
+    monkeypatch.setattr(desktop, "ensure_gui_dependencies", lambda path, bun_path: dependency_installs.append((path, bun_path)))
+
+    def _fake_run(command, **kwargs):
+        runs.append((command, kwargs["cwd"], kwargs.get("env")))
+        return _FakeCompletedProcess(returncode=0)
+
+    monkeypatch.setattr(desktop.subprocess, "run", _fake_run)
+
+    namespace = SimpleNamespace(host="127.0.0.1", port=8765, hotkey="Super+R", bridge_command="uv run parakeet bridge --host 127.0.0.1 --port 8765")
+    assert desktop.run_gui_command(namespace) == 0
+    assert dependency_installs == [(app_dir, "bun")]
+    assert len(runs) == 1
+    command, cwd, env = runs[0]
+    assert command == ["bun", "run", "start"]
+    assert cwd == app_dir
+    assert env is not None
+    assert env["PARAKEET_BRIDGE_URL"] == "http://127.0.0.1:8765"
+    assert env["PARAKEET_BRIDGE_COMMAND"] == "uv run parakeet bridge --host 127.0.0.1 --port 8765"
+    assert env["PARAKEET_HOTKEY"] == "Super+R"
+
+
 def test_stage_windows_desktop_app_copies_desktop_folder(monkeypatch, tmp_path: Path):
     repo_root = tmp_path / "repo"
     app_dir = repo_root / "desktop" / "electrobun"
@@ -437,7 +497,7 @@ def test_run_gui_package_bridge_recovery_command_verifies_offline_then_online(mo
                 "toggleButtonText": "Bridge offline",
                 "bridgeUrl": expected_bridge_url,
                 "bridgeCommand": expected_bridge_command,
-                "statusLine": "Start the WSL bridge command below, then use the button or hotkey.",
+                "statusLine": "Start the bridge command below, then use the button or hotkey.",
             }
         },
     }

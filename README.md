@@ -1,6 +1,6 @@
 # Parakeet Dictation
 
-Packaged microphone dictation for Linux/WSL2 with a native Windows 11 x64 Electrobun GUI that talks to a WSL bridge.
+Packaged microphone dictation for Linux, with a native Electrobun desktop GUI and an optional Windows 11 x64 + WSL bridge workflow.
 
 Milestone 1 ships a packaged `parakeet` CLI with:
 - interactive `parakeet dictation`
@@ -12,7 +12,8 @@ Milestone 1 ships a packaged `parakeet` CLI with:
 
 ## Supported platforms
 
-- Linux CLI/backend: supported
+- Native Linux CLI/backend: supported
+- Native Linux desktop GUI: supported
 - WSL2 Ubuntu CLI/backend: supported
 - Windows 11 x64 packaged GUI + WSL bridge: supported
 - Native Windows backend: not supported
@@ -24,6 +25,26 @@ The lifecycle remains user-controlled:
 - manual start/stop always remains available
 
 ## System prerequisites
+
+On native Linux, you generally need:
+- `uv`
+- `bun`
+- PortAudio
+- a clipboard helper: `wl-clipboard` on Wayland or `xclip` on X11
+- WebKitGTK
+- Ayatana AppIndicator
+- GStreamer good plugins
+
+Example on Arch Linux:
+
+```bash
+sudo pacman -Syu uv bun portaudio wl-clipboard webkit2gtk-4.1 libayatana-appindicator gst-plugins-good base-devel
+```
+
+Recommended Python standard on Linux for this repo:
+- install `uv` from your distro package manager when available
+- let `uv` manage the project Python version
+- use Python `3.12` for current PyTorch/NeMo compatibility instead of relying on a rolling system Python
 
 On Debian/Ubuntu (including WSL2), install audio dependencies first:
 
@@ -46,34 +67,34 @@ Notes for WSL2/WSLg:
 
 ## Install from a fresh checkout
 
-Create and activate a virtual environment:
+Create and activate a virtual environment with `uv`:
 
 ```bash
-python3 -m venv .venv
+uv python install 3.12
+uv venv --python 3.12
 source .venv/bin/activate
-python -m pip install --upgrade pip
 ```
 
 Install PyTorch first:
 
 ```bash
 # GPU (CUDA 12.1)
-python -m pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu121
+uv pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu121
 
 # or CPU-only
-python -m pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
+uv pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
 ```
 
 Then install this project in editable mode:
 
 ```bash
-python -m pip install -e .
+uv pip install -e .
 ```
 
 Optional test/build tools:
 
 ```bash
-python -m pip install -e .[test] build
+uv pip install -e .[test] build
 ```
 
 ## CLI overview
@@ -90,6 +111,7 @@ Subcommands:
 - `parakeet doctor`
 - `parakeet benchmark`
 - `parakeet bridge`
+- `parakeet gui`
 - `parakeet gui-stage`
 - `parakeet gui-package`
 - `parakeet gui-package-smoke`
@@ -179,21 +201,44 @@ Exit codes:
 - `2`: recording blocked
 - `3`: degraded but usable
 
-## Desktop bridge and Windows app
+## Desktop app
 
 The repo includes an Electrobun desktop app in `desktop/electrobun/` that talks to `parakeet bridge` over localhost.
 
-Supported first-release Windows topology:
+### Native Linux workflow
+
+The commands below are distro-agnostic once the required packages above are installed.
+
+1. Start the bridge:
+
+```bash
+uv run parakeet bridge --host 127.0.0.1 --port 8765
+```
+
+2. Start the GUI in another terminal:
+
+```bash
+uv run parakeet gui --host 127.0.0.1 --port 8765 --bridge-command "uv run parakeet bridge --host 127.0.0.1 --port 8765"
+```
+
+For direct Bun-only desktop iteration:
+
+```bash
+cd desktop/electrobun
+bun install
+bun run start
+```
+
+### Optional Windows packaged workflow from WSL
+
+Supported Windows topology:
 - packaged Windows 11 x64 GUI on the Windows host
 - `parakeet bridge` running separately inside WSL on `127.0.0.1`
 - Microsoft Edge WebView2 runtime available on Windows
 - no native Windows backend
 - no ARM64 packaging promise yet
-- no legacy Linux/WSLg desktop app path
 
-Recommended packaged Windows workflow from WSL:
-
-1. Package the Windows app from WSL:
+Package the Windows app from WSL:
 
 ```bash
 .venv/bin/python -m parakeet.cli gui-package --json
@@ -201,31 +246,27 @@ Recommended packaged Windows workflow from WSL:
 
 The packaging command stages `desktop/electrobun/` under `%LOCALAPPDATA%\ParakeetDictation\staging\...` before invoking Windows Bun so Windows tooling does not build from the `\\wsl.localhost\...` repo path.
 
-2. Start the bridge in WSL:
+Start the bridge in WSL:
 
 ```bash
 .venv/bin/python -m parakeet.cli bridge --host 127.0.0.1 --port 8765
 ```
 
-3. Run the generated Windows installer shown in the `gui-package` JSON output, then launch the installed Parakeet desktop app from Windows.
-
-4. For unattended local packaging + GUI + bridge verification from WSL, run:
+For unattended local packaging + GUI + bridge verification from WSL, run:
 
 ```bash
 .venv/bin/python -m parakeet.cli gui-package-verify --json --timeout-seconds 240
 ```
 
-`gui-package-verify` is the single repo-supported unattended Windows + WSL verification entrypoint. It packages the app, launches the packaged Windows GUI, exercises smoke/automation/bridge-recovery/main-window/tray/hotkey coverage, and preserves Windows diagnostics/log bundles under `%LOCALAPPDATA%\ParakeetDictation\staging\...\verify\`.
-
 Desktop behavior:
 - the bridge is localhost-only and opt-in
-- the supported packaged Windows path keeps bridge startup user-controlled
+- bridge startup stays user-controlled on Linux and Windows
 - the app stays locked while the bridge is warming the model
 - transcript history is in-memory for the current bridge session only
 - the app can clear the visible transcript history
 - the app plays a short sound when recording starts and another when recording stops
 - default hotkey is `Ctrl` + `Alt` + `R`
-- override bridge URL or hotkey with `PARAKEET_BRIDGE_URL`, `PARAKEET_BRIDGE_COMMAND`, and `PARAKEET_HOTKEY`
+- override bridge URL, bridge command, or hotkey with `PARAKEET_BRIDGE_URL`, `PARAKEET_BRIDGE_COMMAND`, and `PARAKEET_HOTKEY`
 
 ## Benchmark
 
@@ -302,6 +343,7 @@ parakeet devices --json
 parakeet doctor --json
 parakeet doctor --check-model-cache --json
 parakeet bridge --help
+parakeet gui --help
 parakeet benchmark --fixture tests/fixtures/short_16k.wav --runs 2 --json --check-expected
 cd desktop/electrobun && bun install && bun run check
 .venv/bin/python -m parakeet.cli gui-package --json
@@ -312,7 +354,8 @@ cd desktop/electrobun && bun install && bun run check
 
 - No input devices: run `parakeet devices --json` and `parakeet doctor --json`
 - Pulse/WSLg problems on WSL: check `PULSE_SERVER`, WSLg socket availability, and `pactl info`
-- Clipboard copy unavailable: install `xclip` or `wl-clipboard`, or use `--no-clipboard`
+- Hyprland/Wayland clipboard copy unavailable: install `wl-clipboard`, or use `--no-clipboard`
+- X11 clipboard copy unavailable: install `xclip`, or use `--no-clipboard`
 - GPU not used: install a CUDA-enabled PyTorch build or run explicitly with `--cpu`
 - Missing offline model cache: run `parakeet doctor --check-model-cache --json`
 

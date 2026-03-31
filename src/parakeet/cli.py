@@ -168,6 +168,34 @@ def build_parser() -> argparse.ArgumentParser:
     add_bridge_cli_arguments(bridge_parser)
     bridge_parser.set_defaults(handler=_run_bridge_namespace)
 
+    gui_parser = subparsers.add_parser(
+        "gui",
+        help="Run the Electrobun desktop app on the current platform.",
+        description="Run the Electrobun desktop app on the current platform.",
+    )
+    gui_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bridge host the desktop app should connect to.",
+    )
+    gui_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Bridge port the desktop app should connect to.",
+    )
+    gui_parser.add_argument(
+        "--hotkey",
+        default=None,
+        help="Optional global hotkey override for the desktop app.",
+    )
+    gui_parser.add_argument(
+        "--bridge-command",
+        default=None,
+        help="Optional command string shown in the UI for starting the bridge.",
+    )
+    gui_parser.set_defaults(handler=_run_gui_namespace)
+
     gui_stage_parser = subparsers.add_parser(
         "gui-stage",
         help="Stage the Electrobun desktop app to a drive-backed Windows path.",
@@ -459,6 +487,12 @@ def _run_benchmark_namespace(namespace: argparse.Namespace) -> int:
 
 def _run_bridge_namespace(namespace: argparse.Namespace) -> int:
     return run_bridge_server(namespace)
+
+
+def _run_gui_namespace(namespace: argparse.Namespace) -> int:
+    from parakeet.desktop import run_gui_command
+
+    return run_gui_command(namespace)
 
 
 def _run_gui_stage_namespace(namespace: argparse.Namespace) -> int:
