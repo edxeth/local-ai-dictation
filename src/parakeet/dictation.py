@@ -10,7 +10,9 @@ import io
 import logging
 import os
 import select
+import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import threading
@@ -22,11 +24,16 @@ from typing import Any, Callable, cast
 
 from parakeet.audio import (
     VAD_FRAME_SAMPLES,
+    VAD_SAMPLE_RATE,
     build_vad_backend,
+    downmix_pcm16_to_mono,
     fallback_input_device_id,
     list_input_devices,
+    pulse_default_source_spec,
     record_until_vad_stop,
+    resample_pcm16_mono,
     resolve_input_device_id,
+    resolve_input_sample_rate,
 )
 from parakeet.config import resolve_config
 from parakeet.errors import (
@@ -343,6 +350,94 @@ def _looks_like_missing_default_output_device(exc: Exception) -> bool:
     return "no default output device" in lowered or "default output device" in lowered
 
 
+STOP_CAPTURE_DRAIN_SECONDS = 1.0
+PAREC_LATENCY_MSEC = 40
+PAREC_PROCESS_TIME_MSEC = 20
+
+
+def _record_audio_with_parec(
+    sample_rate: int,
+    *,
+    stop_requested: Callable[[], bool],
+    status_stream=None,
+) -> bytes | None:
+    parec_path = shutil.which("parec")
+    if parec_path is None:
+        raise RuntimeError("parec is unavailable")
+
+    default_spec = pulse_default_source_spec()
+    capture_sample_rate = default_spec[0] if default_spec is not None else sample_rate
+    capture_channels = default_spec[1] if default_spec is not None else 1
+
+    process = subprocess.Popen(
+        [
+            parec_path,
+            "--device=@DEFAULT_SOURCE@",
+            "--raw",
+            "--format=s16le",
+            "--rate",
+            str(capture_sample_rate),
+            "--channels",
+            str(capture_channels),
+            f"--latency-msec={PAREC_LATENCY_MSEC}",
+            f"--process-time-msec={PAREC_PROCESS_TIME_MSEC}",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if process.stdout is None:
+        process.kill()
+        process.wait(timeout=5)
+        raise RuntimeError("parec stdout is unavailable")
+
+    chunks: list[bytes] = []
+
+    def _reader() -> None:
+        while True:
+            data = process.stdout.read(4096)
+            if not data:
+                return
+            chunks.append(data)
+
+    reader_thread = threading.Thread(target=_reader, daemon=True)
+    reader_thread.start()
+    print("🎤 Recording...", file=status_stream, flush=True)
+
+    stop_deadline: float | None = None
+    try:
+        while not _shutdown_event.is_set():
+            if stop_requested():
+                if stop_deadline is None:
+                    stop_deadline = time.monotonic() + STOP_CAPTURE_DRAIN_SECONDS
+                elif time.monotonic() >= stop_deadline:
+                    break
+            if process.poll() is not None:
+                break
+            time.sleep(0.01)
+    finally:
+        if process.poll() is None:
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2)
+        reader_thread.join(timeout=2)
+        process.stdout.close()
+
+    audio_data = b"".join(chunks)
+    if not audio_data:
+        return None
+    audio_data = downmix_pcm16_to_mono(audio_data, capture_channels)
+    if capture_sample_rate != sample_rate:
+        audio_data = resample_pcm16_mono(audio_data, capture_sample_rate, sample_rate)
+    return audio_data or None
+
+
 
 def record_audio_interruptible(
     config: DictationConfig,
@@ -354,6 +449,17 @@ def record_audio_interruptible(
 ) -> bytes | None:
     status_stream = status_stream or _status_stream(config)
     frames_per_buffer = VAD_FRAME_SAMPLES if config.vad else 1024
+    if os.name == "posix" and not config.vad and config.input_device is None and shutil.which("parec") is not None:
+        try:
+            return _record_audio_with_parec(
+                sample_rate,
+                stop_requested=(stop_requested or (lambda: _shutdown_event.is_set() or _manual_stop_requested())),
+                status_stream=status_stream,
+            )
+        except Exception as exc:
+            if config.debug:
+                print(f"parec capture fallback: {exc}", file=status_stream)
+
     try:
         requested_input_device_id = resolve_input_device_id(config.input_device, pyaudio_module)
     except ValueError as exc:
@@ -434,9 +540,13 @@ def record_audio_interruptible(
                 )
             else:
                 frames: list[bytes] = []
+                stop_deadline: float | None = None
                 while not _shutdown_event.is_set():
                     if stop_requested():
-                        break
+                        if stop_deadline is None:
+                            stop_deadline = time.monotonic() + STOP_CAPTURE_DRAIN_SECONDS
+                        elif time.monotonic() >= stop_deadline:
+                            break
                     try:
                         data = stream.read(1024, exception_on_overflow=False)
                         frames.append(data)
@@ -546,11 +656,11 @@ def _run_bridge_controlled_dictation(
     if _shutdown_event.is_set():
         return int(ExitCode.OK)
 
-    sample_rate = 16000
+    capture_sample_rate = VAD_SAMPLE_RATE if config.vad else resolve_input_sample_rate(config.input_device, pyaudio_module)
     audio_data = record_audio_interruptible(
         config,
         pyaudio_module,
-        sample_rate=sample_rate,
+        sample_rate=capture_sample_rate,
         stop_requested=lambda: _shutdown_event.is_set() or _bridge_stop_event.is_set(),
     )
 
@@ -567,8 +677,10 @@ def _run_bridge_controlled_dictation(
         return int(ExitCode.OK)
 
     try:
+        infer_sample_rate = VAD_SAMPLE_RATE
+        prepared_audio_data = resample_pcm16_mono(audio_data, capture_sample_rate, infer_sample_rate)
         transcription, temp_path, _infer_start, _infer_end = _transcribe_once(
-            config, model, audio_data, sample_rate
+            config, model, prepared_audio_data, infer_sample_rate
         )
     except ModelError as exc:
         print(f"❌ Error: {exc}", file=status_stream)
@@ -653,17 +765,19 @@ def run_dictation(args: argparse.Namespace) -> int:
             ):
                 break
 
-            sample_rate = 16000
+            capture_sample_rate = VAD_SAMPLE_RATE if config.vad else resolve_input_sample_rate(config.input_device, pyaudio_module)
             record_start = time.perf_counter()
-            audio_data = record_audio_interruptible(config, pyaudio_module, sample_rate=sample_rate)
+            audio_data = record_audio_interruptible(config, pyaudio_module, sample_rate=capture_sample_rate)
             record_end = time.perf_counter()
 
             if not audio_data or _shutdown_event.is_set():
                 break
 
             try:
+                infer_sample_rate = VAD_SAMPLE_RATE
+                prepared_audio_data = resample_pcm16_mono(audio_data, capture_sample_rate, infer_sample_rate)
                 transcription, temp_path, infer_start, infer_end = _transcribe_once(
-                    config, model, audio_data, sample_rate
+                    config, model, prepared_audio_data, infer_sample_rate
                 )
             except ModelError as exc:
                 print(f"❌ Error: {exc}", file=status_stream)
@@ -685,7 +799,7 @@ def run_dictation(args: argparse.Namespace) -> int:
             )
 
             if config.debug:
-                seconds = len(audio_data) / (2 * sample_rate)
+                seconds = len(audio_data) / (2 * capture_sample_rate)
                 print(
                     f"Audio length: {seconds:.2f}s | Record: {record_end - record_start:.3f}s | Infer: {infer_end - infer_start:.3f}s",
                     file=status_stream,

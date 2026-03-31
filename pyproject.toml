@@ -16,6 +16,7 @@ dependencies = [
   "pyaudio",
   "pyperclip",
   "webrtcvad-wheels",
+  "ml-dtypes==0.5.4; python_version < '3.13'",
   "tomli>=2; python_version < '3.11'",
 ]
 

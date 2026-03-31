@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { spawn } from "node:child_process";
 
 import { FFIType, dlopen } from "bun:ffi";
 import { BrowserView, BrowserWindow, GlobalShortcut, Tray, type RPCSchema } from "electrobun/bun";
@@ -9,7 +10,9 @@ type SessionPayload = {
   schema_version: number;
   state: "stopped" | "idle" | "starting" | "recording" | "transcribing" | "error";
   started_at: number | null;
+  recording_started_at: number | null;
   last_completed_at: number | null;
+  clipboard_copied_at: number | null;
   last_transcript: {
     schema_version: number;
     transcript: string;
@@ -155,6 +158,7 @@ const GUI_LOG_PATH = Bun.env.PARAKEET_GUI_LOG_PATH || (DEFAULT_STARTUP_LOG_DIR ?
 const GUI_STARTUP_DIAGNOSTICS_PATH = Bun.env.PARAKEET_GUI_STARTUP_DIAGNOSTICS_PATH
   || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup-diagnostics.json") : "");
 const GUI_AUTO_EXIT_MS = Number(Bun.env.PARAKEET_GUI_AUTO_EXIT_MS || "0") || 0;
+const APP_STARTED_AT = Date.now() / 1000;
 const APP_ICON_URL = "views://mainview/assets/parakeet-icon.png";
 const APP_WINDOW_ICON_PATH = join(import.meta.dir, "..", "..", "app.ico");
 
@@ -170,6 +174,11 @@ const nativeSoundPlayer = process.platform === "win32"
       },
     })
   : null;
+const nativeCuePlayerCommands = [
+  [Bun.which("paplay"), []],
+  [Bun.which("pw-play"), []],
+  [Bun.which("ffplay"), ["-v", "quiet", "-nodisp", "-autoexit"]],
+] as const;
 
 function resolveSessionCueAssetPath(kind: SessionCueKind): string | null {
   const filename = kind === "start" ? "session-start.wav" : "session-complete.wav";
@@ -188,7 +197,9 @@ const emptySession = (): SessionPayload => ({
   schema_version: 1,
   state: "stopped",
   started_at: null,
+  recording_started_at: null,
   last_completed_at: null,
+  clipboard_copied_at: null,
   last_transcript: null,
   last_error: null,
   model_loaded: false,
@@ -311,31 +322,49 @@ const BRIDGE_POLL_INTERVAL_MS = 120;
 const HOTKEY_COOLDOWN_MS = 450;
 
 let lastObservedSessionState: SessionPayload["state"] | "offline" = "offline";
-let lastObservedCompletionAt: number | null = null;
+let lastPlayedStartCueAt: number | null = null;
+let lastPlayedCompleteCueAt: number | null = null;
 
 function playNativeSessionCue(kind: SessionCueKind): boolean {
-  if (process.platform !== "win32" || !nativeSoundPlayer) {
-    return false;
-  }
-
   const assetPath = resolveSessionCueAssetPath(kind);
   if (!assetPath) {
     appendGuiLog("WARN", `Session cue asset missing for ${kind}`);
     return false;
   }
 
-  try {
-    const started = nativeSoundPlayer.symbols.PlaySoundA(toCString(assetPath), null, SND_ASYNC | SND_NODEFAULT | SND_FILENAME);
-    if (!started) {
-      appendGuiLog("WARN", `Native PlaySound failed for ${kind}`);
+  if (process.platform === "win32" && nativeSoundPlayer) {
+    try {
+      const started = nativeSoundPlayer.symbols.PlaySoundA(toCString(assetPath), null, SND_ASYNC | SND_NODEFAULT | SND_FILENAME);
+      if (!started) {
+        appendGuiLog("WARN", `Native PlaySound failed for ${kind}`);
+        return false;
+      }
+      appendGuiLog("INFO", `Playing ${kind} cue natively with PlaySound`);
+      return true;
+    } catch (error) {
+      appendGuiLog("WARN", `Failed to play ${kind} cue natively: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
-    appendGuiLog("INFO", `Playing ${kind} cue natively`);
-    return true;
-  } catch (error) {
-    appendGuiLog("WARN", `Failed to play ${kind} cue natively: ${error instanceof Error ? error.message : String(error)}`);
-    return false;
   }
+
+  for (const [command, args] of nativeCuePlayerCommands) {
+    if (!command) {
+      continue;
+    }
+    try {
+      const child = spawn(command, [...args, assetPath], {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+      appendGuiLog("INFO", `Playing ${kind} cue via ${command}`);
+      return true;
+    } catch (error) {
+      appendGuiLog("WARN", `Failed to play ${kind} cue via ${command}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return false;
 }
 
 async function requestRendererSessionCue(kind: "start" | "complete") {
@@ -355,25 +384,26 @@ async function requestRendererSessionCue(kind: "start" | "complete") {
 
 function applyObservedBridgeState(state: BridgeViewState, { allowCue = true }: { allowCue?: boolean } = {}) {
   const nextSessionState = state.connected ? state.session.state : "offline";
-  const nextCompletedAt = state.connected ? state.session.last_completed_at : null;
+  const nextStartCueAt = state.connected
+    ? (typeof state.session.recording_started_at === "number" ? state.session.recording_started_at : state.session.started_at)
+    : null;
+  const nextCompleteCueAt = state.connected
+    ? (typeof state.session.clipboard_copied_at === "number" ? state.session.clipboard_copied_at : state.session.last_completed_at)
+    : null;
 
   if (allowCue) {
-    if (lastObservedSessionState !== "recording" && nextSessionState === "recording") {
+    if (nextSessionState === "recording" && nextStartCueAt !== null && nextStartCueAt >= APP_STARTED_AT && nextStartCueAt !== lastPlayedStartCueAt) {
+      lastPlayedStartCueAt = nextStartCueAt;
       void requestRendererSessionCue("start");
     }
-    if (
-      lastObservedCompletionAt !== null
-      && nextCompletedAt !== null
-      && nextCompletedAt > lastObservedCompletionAt
-    ) {
+
+    if (nextCompleteCueAt !== null && nextCompleteCueAt >= APP_STARTED_AT && nextCompleteCueAt !== lastPlayedCompleteCueAt) {
+      lastPlayedCompleteCueAt = nextCompleteCueAt;
       void requestRendererSessionCue("complete");
     }
   }
 
   lastObservedSessionState = nextSessionState;
-  if (nextCompletedAt !== null) {
-    lastObservedCompletionAt = nextCompletedAt;
-  }
 }
 
 async function refreshBridgeStateCache({ allowCue = true }: { allowCue?: boolean } = {}) {
@@ -497,7 +527,7 @@ function startBridgePolling() {
   if (bridgePollTimer) {
     return;
   }
-  void refreshBridgeStateCache({ allowCue: false }).catch((error) => {
+  void refreshBridgeStateCache().catch((error) => {
     appendGuiLog("WARN", `Initial bridge poll failed: ${error instanceof Error ? error.message : String(error)}`);
   });
   bridgePollTimer = setInterval(() => {

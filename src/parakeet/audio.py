@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import audioop
 import os
 from pathlib import Path
 import shutil
@@ -96,11 +97,23 @@ def list_input_devices(pyaudio_module: PyAudioModule | None = None) -> list[Audi
         pa.terminate()
 
 
+def _preferred_linux_input_device_id(devices: list[AudioDevice]) -> int | None:
+    for device in devices:
+        if device.name.strip().lower() == "pipewire":
+            return device.id
+    return None
+
+
 def resolve_input_device_id(
     input_device: int | str | None,
     pyaudio_module: PyAudioModule | None = None,
 ) -> int | None:
     if input_device is None:
+        if os.name == "posix":
+            try:
+                return _preferred_linux_input_device_id(list_input_devices(pyaudio_module))
+            except Exception:
+                return None
         return None
     if isinstance(input_device, int):
         return input_device
@@ -114,6 +127,77 @@ def resolve_input_device_id(
             return device.id
 
     raise ValueError(f"No input device named {requested_name!r}")
+
+
+def pulse_default_source_spec() -> tuple[int, int] | None:
+    pactl_path = shutil.which("pactl")
+    if pactl_path is None:
+        return None
+
+    try:
+        default_source = subprocess.run(
+            [pactl_path, "get-default-source"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if not default_source:
+            return None
+
+        sources = subprocess.run(
+            [pactl_path, "list", "short", "sources"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+    except Exception:
+        return None
+
+    for line in sources:
+        parts = line.split("\t")
+        if len(parts) < 4 or parts[1] != default_source:
+            continue
+        spec = parts[3].split()
+        if len(spec) < 3:
+            continue
+        try:
+            channels = int(spec[1].removesuffix("ch"))
+            sample_rate = int(spec[2].removesuffix("Hz"))
+        except ValueError:
+            return None
+        return sample_rate, channels
+
+    return None
+
+
+def resolve_input_sample_rate(
+    input_device: int | str | None,
+    pyaudio_module: PyAudioModule | None = None,
+    *,
+    fallback: int = VAD_SAMPLE_RATE,
+) -> int:
+    if input_device is None and os.name == "posix":
+        pulse_spec = pulse_default_source_spec()
+        if pulse_spec is not None:
+            return pulse_spec[0]
+
+    try:
+        devices = list_input_devices(pyaudio_module)
+    except Exception:
+        return fallback
+
+    resolved_device_id = resolve_input_device_id(input_device, pyaudio_module)
+    if resolved_device_id is None:
+        for device in devices:
+            if device.is_default_candidate and device.default_sample_rate > 0:
+                return int(device.default_sample_rate)
+        return fallback
+
+    for device in devices:
+        if device.id == resolved_device_id and device.default_sample_rate > 0:
+            return int(device.default_sample_rate)
+
+    return fallback
 
 
 def fallback_input_device_id(devices: list[AudioDevice]) -> int | None:
@@ -149,6 +233,25 @@ def _normalize_vad_frame(frame: bytes) -> bytes:
     if len(frame) > VAD_FRAME_BYTES:
         return frame[:VAD_FRAME_BYTES]
     return frame.ljust(VAD_FRAME_BYTES, b"\x00")
+
+
+def downmix_pcm16_to_mono(audio_data: bytes, channels: int) -> bytes:
+    if channels <= 1 or not audio_data:
+        return audio_data
+    if channels != 2:
+        raise ValueError(f"Unsupported channel count for downmix: {channels}")
+    return audioop.tomono(audio_data, 2, 0.5, 0.5)
+
+
+def resample_pcm16_mono(
+    audio_data: bytes,
+    input_sample_rate: int,
+    output_sample_rate: int = VAD_SAMPLE_RATE,
+) -> bytes:
+    if not audio_data or input_sample_rate == output_sample_rate:
+        return audio_data
+    converted, _state = audioop.ratecv(audio_data, 2, 1, input_sample_rate, output_sample_rate, None)
+    return converted
 
 
 def record_until_vad_stop(

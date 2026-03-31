@@ -25,8 +25,28 @@ DictationBridgeController = bridge_module.DictationBridgeController
 TranscriptionResult = importlib.import_module("parakeet.types").TranscriptionResult
 
 
+class _ClipboardSuccess:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def copy(self, text: str) -> None:
+        self.calls.append(text)
+
+
+class _ClipboardFailure:
+    def copy(self, text: str) -> None:
+        raise RuntimeError("clipboard backend unavailable")
+
+
 def _runtime_loader(debug: bool):
-    return object(), object(), object(), object()
+    return object(), object(), _ClipboardSuccess(), object()
+
+
+def _make_runtime_loader(clipboard_module: Any):
+    def _loader(debug: bool):
+        return object(), object(), clipboard_module, object()
+
+    return _loader
 
 
 def _make_model_loader(delay: float = 0.0, calls: list[int] | None = None):
@@ -163,6 +183,55 @@ def test_bridge_reuses_loaded_model_across_sessions():
     controller.shutdown()
 
 
+def test_bridge_records_recording_and_clipboard_timestamps():
+    clipboard = _ClipboardSuccess()
+    controller = DictationBridgeController(
+        runtime_loader=_make_runtime_loader(clipboard),
+        model_loader=_make_model_loader(),
+        recorder=_recorder,
+        transcriber=_transcriber,
+        transcript_timeout=1.0,
+    )
+
+    controller.start_session()
+    time.sleep(0.05)
+    in_progress = controller.get_session_payload()
+    assert in_progress["state"] == "recording"
+    assert in_progress["recording_started_at"] is not None
+    assert in_progress["clipboard_copied_at"] is None
+
+    completed = controller.stop_session()
+    assert completed["last_transcript"]["transcript"] == "fake transcript"
+    assert completed["last_completed_at"] is not None
+    assert completed["clipboard_copied_at"] is not None
+    assert completed["clipboard_copied_at"] <= completed["last_completed_at"]
+    assert clipboard.calls == ["fake transcript"]
+
+    controller.shutdown()
+
+
+
+def test_bridge_leaves_clipboard_timestamp_unset_when_copy_fails():
+    controller = DictationBridgeController(
+        runtime_loader=_make_runtime_loader(_ClipboardFailure()),
+        model_loader=_make_model_loader(),
+        recorder=_recorder,
+        transcriber=_transcriber,
+        transcript_timeout=1.0,
+    )
+
+    controller.start_session()
+    time.sleep(0.05)
+    completed = controller.stop_session()
+
+    assert completed["last_transcript"]["transcript"] == "fake transcript"
+    assert completed["clipboard_copied_at"] is None
+    assert any("Clipboard warning:" in line for line in completed["stderr_tail"])
+
+    controller.shutdown()
+
+
+
 def test_bridge_server_health_and_session_endpoints():
     controller = DictationBridgeController(
         runtime_loader=_runtime_loader,
@@ -277,11 +346,13 @@ def test_bridge_cli_e2e_mode_exposes_deterministic_session_flow():
             lambda payload: payload.get("state") == "recording",
         )
         assert recording["stderr_tail"][-1] == "🎤 Recording..."
+        assert recording["recording_started_at"] is not None
 
         stopped = _post_json(f"http://127.0.0.1:{port}/session/stop")
         assert stopped["state"] == "idle"
         assert stopped["last_transcript"]["transcript"] == "deterministic transcript"
         assert stopped["last_transcript"]["metadata"]["e2e_mode"] is True
+        assert stopped["clipboard_copied_at"] is not None
         assert len(stopped["history"]) == 1
 
         session = _wait_for_json(

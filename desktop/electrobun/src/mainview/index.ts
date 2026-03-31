@@ -18,7 +18,9 @@ type SessionPayload = {
   schema_version: number;
   state: "stopped" | "idle" | "starting" | "recording" | "transcribing" | "error";
   started_at: number | null;
+  recording_started_at: number | null;
   last_completed_at: number | null;
+  clipboard_copied_at: number | null;
   last_transcript: TranscriptPayload | null;
   last_error: string | null;
   model_loaded: boolean;
@@ -247,31 +249,23 @@ async function playSessionCueAsync(kind: SessionCueKind): Promise<void> {
     }
 
     if (context.state === "running") {
-      const startAt = context.currentTime + 0.003;
-      const firstFrequency = kind === "start" ? 880 : 740;
-      const secondFrequency = kind === "start" ? 1320 : 494;
-      const pulseGap = 0.13;
+      const pulseStart = context.currentTime + 0.003;
       const pulseDuration = 0.1;
-      const peakGain = kind === "start" ? 0.62 : 0.56;
+      const pulseEnd = pulseStart + pulseDuration;
+      const oscillator = context.createOscillator();
+      const gainNode = context.createGain();
 
-      for (let pulseIndex = 0; pulseIndex < 2; pulseIndex += 1) {
-        const pulseStart = startAt + (pulseIndex * pulseGap);
-        const pulseEnd = pulseStart + pulseDuration;
-        const oscillator = context.createOscillator();
-        const gainNode = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(kind === "start" ? 1046 : 740, pulseStart);
 
-        oscillator.type = "square";
-        oscillator.frequency.setValueAtTime(pulseIndex === 0 ? firstFrequency : secondFrequency, pulseStart);
+      gainNode.gain.setValueAtTime(0.0001, pulseStart);
+      gainNode.gain.exponentialRampToValueAtTime(kind === "start" ? 0.62 : 0.56, pulseStart + 0.006);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, pulseEnd);
 
-        gainNode.gain.setValueAtTime(0.0001, pulseStart);
-        gainNode.gain.exponentialRampToValueAtTime(peakGain, pulseStart + 0.006);
-        gainNode.gain.exponentialRampToValueAtTime(0.0001, pulseEnd);
-
-        oscillator.connect(gainNode);
-        gainNode.connect(context.destination);
-        oscillator.start(pulseStart);
-        oscillator.stop(pulseEnd + 0.01);
-      }
+      oscillator.connect(gainNode);
+      gainNode.connect(context.destination);
+      oscillator.start(pulseStart);
+      oscillator.stop(pulseEnd + 0.01);
       return;
     }
   }
@@ -615,14 +609,13 @@ async function bootstrap() {
       userAgent: navigator.userAgent,
     });
     await refreshState();
+    setInterval(() => {
+      void refreshState({ quiet: true });
+    }, 1000);
   } catch (error) {
     errorBox.textContent = error instanceof Error ? error.message : String(error);
   }
 }
 
 syncViewportDensity();
-setInterval(() => {
-  void refreshState({ quiet: true });
-}, 1000);
-
 void bootstrap();

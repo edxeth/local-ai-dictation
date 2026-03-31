@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -170,10 +171,39 @@ def ensure_bun_available() -> str:
     return bun_path
 
 
+def _terminate_existing_native_gui_processes() -> None:
+    current_pid = os.getpid()
+    patterns = [
+        "parakeet gui --host",
+        "bun run start",
+        "electrobun dev",
+        "parakeet-desktop-dev/bin/launcher",
+        "parakeet-desktop-dev/bin/bun",
+    ]
+    for pattern in patterns:
+        completed = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, check=False)
+        if completed.returncode not in {0, 1}:
+            continue
+        for line in completed.stdout.splitlines():
+            pid_text = line.strip()
+            if not pid_text.isdigit():
+                continue
+            pid = int(pid_text)
+            if pid == current_pid:
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                continue
+
+
 def run_gui_command(namespace: Any) -> int:
     app_dir = ensure_desktop_app_available()
     bun_path = ensure_bun_available()
     ensure_gui_dependencies(app_dir, bun_path)
+    _terminate_existing_native_gui_processes()
     completed = subprocess.run(
         [bun_path, "run", "start"],
         cwd=app_dir,

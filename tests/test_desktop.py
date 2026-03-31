@@ -301,7 +301,7 @@ def test_run_gui_command_launches_native_electrobun_app(monkeypatch, tmp_path: P
     monkeypatch.setattr(desktop, "ensure_gui_dependencies", lambda path, bun_path: dependency_installs.append((path, bun_path)))
 
     def _fake_run(command, **kwargs):
-        runs.append((command, kwargs["cwd"], kwargs.get("env")))
+        runs.append((command, kwargs.get("cwd"), kwargs.get("env")))
         return _FakeCompletedProcess(returncode=0)
 
     monkeypatch.setattr(desktop.subprocess, "run", _fake_run)
@@ -309,8 +309,8 @@ def test_run_gui_command_launches_native_electrobun_app(monkeypatch, tmp_path: P
     namespace = SimpleNamespace(host="127.0.0.1", port=8765, hotkey="Super+R", bridge_command="uv run parakeet bridge --host 127.0.0.1 --port 8765")
     assert desktop.run_gui_command(namespace) == 0
     assert dependency_installs == [(app_dir, "bun")]
-    assert len(runs) == 1
-    command, cwd, env = runs[0]
+    assert len(runs) == 6
+    command, cwd, env = runs[-1]
     assert command == ["bun", "run", "start"]
     assert cwd == app_dir
     assert env is not None

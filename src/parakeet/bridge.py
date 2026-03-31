@@ -6,6 +6,7 @@ from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+from pathlib import Path
 import signal
 import sys
 import threading
@@ -13,12 +14,13 @@ import time
 from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs, urlparse
 
-from parakeet.audio import list_input_devices
+from parakeet.audio import list_input_devices, resample_pcm16_mono, resolve_input_sample_rate
 from parakeet.dictation import (
     _load_model,
     _load_runtime_dependencies,
     _transcribe_once,
     record_audio_interruptible,
+    save_audio,
 )
 from parakeet.doctor import collect_doctor_report
 from parakeet.errors import ExitCode, ModelError
@@ -28,6 +30,8 @@ from parakeet.types import DictationConfig, TranscriptionResult
 
 BRIDGE_SCHEMA_VERSION = 1
 DEFAULT_E2E_TRANSCRIPT = "Parakeet deterministic E2E transcript"
+LAST_CAPTURE_RAW_PATH = Path("/tmp/parakeet-last-capture-raw.wav")
+LAST_CAPTURE_MODEL_INPUT_PATH = Path("/tmp/parakeet-last-capture-16k.wav")
 
 
 class BridgeStateError(RuntimeError):
@@ -108,7 +112,9 @@ class DictationBridgeController:
         self._session_thread: threading.Thread | None = None
         self._state = "stopped"
         self._started_at: float | None = None
+        self._recording_started_at: float | None = None
         self._last_completed_at: float | None = None
+        self._clipboard_copied_at: float | None = None
         self._last_transcript: dict[str, Any] | None = None
         self._last_error: str | None = None
         self._stderr_tail: list[str] = []
@@ -138,8 +144,10 @@ class DictationBridgeController:
             should_echo = True
             if len(self._stderr_tail) > self._stderr_tail_limit:
                 self._stderr_tail = self._stderr_tail[-self._stderr_tail_limit :]
-            if text == "🎤 Recording..." and self._state == "starting":
-                self._state = "recording"
+            if text == "🎤 Recording...":
+                self._recording_started_at = time.time()
+                if self._state == "starting":
+                    self._state = "recording"
         if should_echo:
             print(text, file=sys.stdout, flush=True)
 
@@ -237,12 +245,16 @@ class DictationBridgeController:
             )
         )
 
-    def _copy_to_clipboard(self, transcription: TranscriptionResult) -> None:
+    def _copy_to_clipboard(self, transcription: TranscriptionResult) -> bool:
         if not self.clipboard or self._pyperclip_module is None:
-            return
+            return False
         warning = copy_transcript_to_clipboard(transcription, self._pyperclip_module)
         if warning is not None:
             self._append_diagnostic(f"Clipboard warning: {warning}")
+            return False
+        with self._lock:
+            self._clipboard_copied_at = time.time()
+        return True
 
     def _wait_for_e2e_delay(self, delay_ms: int) -> bool:
         if delay_ms <= 0:
@@ -283,6 +295,10 @@ class DictationBridgeController:
                     self._started_at = None
                 return
 
+        if self.clipboard:
+            with self._lock:
+                self._clipboard_copied_at = time.time()
+
         self._complete_session(
             TranscriptionResult(
                 text=self._e2e_transcript,
@@ -315,10 +331,11 @@ class DictationBridgeController:
             if self._pyaudio_module is None:
                 raise RuntimeError("PyAudio runtime is unavailable")
 
+            capture_sample_rate = 16000 if self.vad else resolve_input_sample_rate(self.input_device, self._pyaudio_module)
             audio_data = self._recorder(
                 config,
                 self._pyaudio_module,
-                sample_rate=16000,
+                sample_rate=capture_sample_rate,
                 stop_requested=lambda: self._stop_requested.is_set() or self._shutdown_requested.is_set(),
                 status_stream=self._diagnostic_stream,
             )
@@ -333,15 +350,25 @@ class DictationBridgeController:
                 self._complete_cancelled_before_recording()
                 return
 
+            if len(audio_data) % 2 == 0:
+                save_audio(audio_data, str(LAST_CAPTURE_RAW_PATH), sample_rate=capture_sample_rate)
+
             with self._lock:
                 self._state = "transcribing"
 
             if self._model is None:
                 raise RuntimeError("Model is not loaded")
+            infer_audio_data = (
+                resample_pcm16_mono(audio_data, capture_sample_rate, 16000)
+                if len(audio_data) % 2 == 0
+                else audio_data
+            )
+            if len(infer_audio_data) % 2 == 0:
+                save_audio(infer_audio_data, str(LAST_CAPTURE_MODEL_INPUT_PATH), sample_rate=16000)
             transcription, temp_path, _infer_start, _infer_end = self._transcriber(
                 config,
                 self._model,
-                audio_data,
+                infer_audio_data,
                 16000,
                 status_stream=self._diagnostic_stream,
             )
@@ -388,6 +415,7 @@ class DictationBridgeController:
             self._session_finished.clear()
             self._state = "starting"
             self._started_at = time.time()
+            self._recording_started_at = None
             self._last_error = None
             self._session_thread = threading.Thread(target=self._session_worker, daemon=True)
             self._session_thread.start()
@@ -448,7 +476,9 @@ class DictationBridgeController:
                 "schema_version": BRIDGE_SCHEMA_VERSION,
                 "state": self._state,
                 "started_at": self._started_at,
+                "recording_started_at": self._recording_started_at,
                 "last_completed_at": self._last_completed_at,
+                "clipboard_copied_at": self._clipboard_copied_at,
                 "last_transcript": self._last_transcript,
                 "last_error": self._last_error,
                 "model_loaded": self._model_loaded,
