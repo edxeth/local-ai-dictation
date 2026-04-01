@@ -19,10 +19,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-bridge_module = importlib.import_module("parakeet.bridge")
+bridge_module = importlib.import_module("local_ai_dictation.bridge")
 BridgeStateError = bridge_module.BridgeStateError
 DictationBridgeController = bridge_module.DictationBridgeController
-TranscriptionResult = importlib.import_module("parakeet.types").TranscriptionResult
+TranscriptionResult = importlib.import_module("local_ai_dictation.types").TranscriptionResult
 
 
 class _ClipboardSuccess:
@@ -286,10 +286,10 @@ def test_build_bridge_controller_from_namespace_reads_e2e_env():
     controller = bridge_module.build_bridge_controller_from_namespace(
         namespace,
         env={
-            "PARAKEET_E2E_MODE": "1",
-            "PARAKEET_E2E_TRANSCRIPT": "scripted transcript",
-            "PARAKEET_E2E_START_DELAY_MS": "25",
-            "PARAKEET_E2E_STOP_DELAY_MS": "35",
+            "LOCAL_AI_DICTATION_E2E_MODE": "1",
+            "LOCAL_AI_DICTATION_E2E_TRANSCRIPT": "scripted transcript",
+            "LOCAL_AI_DICTATION_E2E_START_DELAY_MS": "25",
+            "LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS": "35",
         },
     )
 
@@ -314,13 +314,13 @@ def test_bridge_cli_e2e_mode_exposes_deterministic_session_flow():
     port = _reserve_local_port()
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC)
-    env["PARAKEET_E2E_MODE"] = "1"
-    env["PARAKEET_E2E_TRANSCRIPT"] = "deterministic transcript"
-    env["PARAKEET_E2E_START_DELAY_MS"] = "30"
-    env["PARAKEET_E2E_STOP_DELAY_MS"] = "40"
+    env["LOCAL_AI_DICTATION_E2E_MODE"] = "1"
+    env["LOCAL_AI_DICTATION_E2E_TRANSCRIPT"] = "deterministic transcript"
+    env["LOCAL_AI_DICTATION_E2E_START_DELAY_MS"] = "30"
+    env["LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS"] = "40"
 
     process = subprocess.Popen(
-        [sys.executable, "-m", "parakeet.cli", "bridge", "--host", "127.0.0.1", "--port", str(port)],
+        [sys.executable, "-m", "local_ai_dictation.cli", "bridge", "--host", "127.0.0.1", "--port", str(port)],
         cwd=ROOT,
         env=env,
         stdout=subprocess.PIPE,

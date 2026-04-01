@@ -2,8 +2,8 @@ import type { ElectrobunConfig } from "electrobun";
 
 export default {
   app: {
-    name: "parakeet-desktop",
-    identifier: "parakeet.desktop.local",
+    name: "local-ai-dictation-desktop",
+    identifier: "local-ai-dictation.desktop.local",
     version: "0.0.1",
   },
   runtime: {
@@ -21,8 +21,8 @@ export default {
     copy: {
       "src/mainview/index.html": "views/mainview/index.html",
       "src/mainview/index.css": "views/mainview/index.css",
-      "src/mainview/assets/parakeet-icon.svg": "views/mainview/assets/parakeet-icon.svg",
-      "src/mainview/assets/parakeet-icon.png": "views/mainview/assets/parakeet-icon.png",
+      "src/mainview/assets/local-ai-dictation-icon.svg": "views/mainview/assets/local-ai-dictation-icon.svg",
+      "src/mainview/assets/local-ai-dictation-icon.png": "views/mainview/assets/local-ai-dictation-icon.png",
       "src/mainview/assets/session-start.wav": "views/mainview/assets/session-start.wav",
       "src/mainview/assets/session-complete.wav": "views/mainview/assets/session-complete.wav",
     },
@@ -31,11 +31,11 @@ export default {
     },
     linux: {
       bundleCEF: false,
-      icon: "src/mainview/assets/parakeet-icon.png",
+      icon: "src/mainview/assets/local-ai-dictation-icon.png",
     },
     win: {
       bundleCEF: false,
-      icon: "src/mainview/assets/parakeet-icon.ico",
+      icon: "src/mainview/assets/local-ai-dictation-icon.ico",
     },
   },
 } satisfies ElectrobunConfig;

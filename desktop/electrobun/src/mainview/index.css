@@ -442,6 +442,13 @@ h1 {
   min-width: 0;
 }
 
+.control-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 
 .value,
 .status-line,

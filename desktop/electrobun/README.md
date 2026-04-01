@@ -1,6 +1,6 @@
-# Parakeet Electrobun Desktop App
+# Local AI Dictation Desktop App
 
-Small desktop control surface for `parakeet bridge`, with native Linux support and an optional packaged Windows GUI + WSL bridge workflow.
+Small desktop control surface for `local-ai-dictation bridge`, with native Linux support and an optional packaged Windows GUI + WSL bridge workflow.
 
 ## What it does
 
@@ -22,13 +22,13 @@ Run these commands from the repo root:
 1. Start the bridge:
 
 ```bash
-uv run parakeet bridge --host 127.0.0.1 --port 8765
+uv run local-ai-dictation bridge --host 127.0.0.1 --port 8765
 ```
 
 2. Start the GUI in another terminal:
 
 ```bash
-uv run parakeet gui --host 127.0.0.1 --port 8765 --bridge-command "uv run parakeet bridge --host 127.0.0.1 --port 8765"
+uv run local-ai-dictation gui --host 127.0.0.1 --port 8765 --bridge-command "uv run local-ai-dictation bridge --host 127.0.0.1 --port 8765"
 ```
 
 For direct Bun iteration:
@@ -45,15 +45,15 @@ Run these commands from the repo root in WSL:
 1. Package the Windows app:
 
 ```bash
-.venv/bin/python -m parakeet.cli gui-package --json
+.venv/bin/local-ai-dictation gui-package --json
 ```
 
-This stages `desktop/electrobun/` to `%LOCALAPPDATA%\ParakeetDictation\staging\...` first so Windows Bun builds from a drive-backed path instead of the `\\wsl.localhost\...` repo path.
+This stages `desktop/electrobun/` to `%LOCALAPPDATA%\LocalAIDictation\staging\...` first so Windows Bun builds from a drive-backed path instead of the `\\wsl.localhost\...` repo path.
 
 2. Start the bridge in WSL:
 
 ```bash
-.venv/bin/python -m parakeet.cli bridge --host 127.0.0.1 --port 8765
+.venv/bin/local-ai-dictation bridge --host 127.0.0.1 --port 8765
 ```
 
 3. Run the generated Windows installer from the `gui-package` output and launch the installed app on Windows.
@@ -61,24 +61,24 @@ This stages `desktop/electrobun/` to `%LOCALAPPDATA%\ParakeetDictation\staging\.
 4. For the single unattended local verification entrypoint, run:
 
 ```bash
-.venv/bin/python -m parakeet.cli gui-package-verify --json --timeout-seconds 240
+.venv/bin/local-ai-dictation gui-package-verify --json --timeout-seconds 240
 ```
 
 `gui-package-verify` packages the app and validates packaged smoke, localhost automation, bridge recovery, main-window controls, tray actions, and global hotkey wiring against the real deterministic WSL bridge.
 
 ## Environment overrides
 
-- `PARAKEET_BRIDGE_URL` — default `http://127.0.0.1:8765`
-- `PARAKEET_BRIDGE_COMMAND` — command shown in the UI as the bridge startup command
-- `PARAKEET_HOTKEY` — default `Control+Alt+R` on Linux, `CommandOrControl+Alt+R` on Windows
-- native Linux global hotkeys are for X11 sessions; on Wayland, use your compositor to bind `parakeet bridge-toggle`
+- `LOCAL_AI_DICTATION_BRIDGE_URL` — default `http://127.0.0.1:8765`
+- `LOCAL_AI_DICTATION_BRIDGE_COMMAND` — command shown in the UI as the bridge startup command
+- `LOCAL_AI_DICTATION_HOTKEY` — default `Control+Alt+R` on Linux, `CommandOrControl+Alt+R` on Windows
+- native Linux global hotkeys are for X11 sessions; on Wayland, use your compositor to bind `local-ai-dictation bridge-toggle`
 
 Example:
 
 ```bash
-PARAKEET_HOTKEY="Control+Alt+R" bun run start
+LOCAL_AI_DICTATION_HOTKEY="Control+Alt+R" bun run start
 # Wayland compositor workaround example:
-parakeet bridge-toggle --host 127.0.0.1 --port 8765
+local-ai-dictation bridge-toggle --host 127.0.0.1 --port 8765
 ```
 
 ## Verify the app scaffold
@@ -86,9 +86,9 @@ parakeet bridge-toggle --host 127.0.0.1 --port 8765
 ```bash
 bun install
 bun run check
-uv run parakeet gui --help
-.venv/bin/python -m parakeet.cli gui-package --json
-.venv/bin/python -m parakeet.cli gui-package-verify --json --timeout-seconds 240
+uv run local-ai-dictation gui --help
+.venv/bin/local-ai-dictation gui-package --json
+.venv/bin/local-ai-dictation gui-package-verify --json --timeout-seconds 240
 ```
 
 `bun run check` performs bundle-time verification of:
@@ -107,5 +107,5 @@ uv run parakeet gui --help
 - the bridge is localhost-only
 - bridge startup stays user-controlled on Linux and Windows
 - only one recording session is supported at a time
-- the bridge subprocess reuses the existing packaged `parakeet dictation` flow in JSON mode
+- the bridge subprocess reuses the existing packaged `local-ai-dictation dictation` flow in JSON mode
 - if the bridge is offline, the desktop app stays usable and shows the command needed to start the backend

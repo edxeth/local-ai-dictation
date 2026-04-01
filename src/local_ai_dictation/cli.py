@@ -1,21 +1,114 @@
-"""Top-level CLI entry point for the packaged Parakeet app."""
+"""Top-level CLI entry point for Local AI Dictation."""
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
 import json
+import os
+from pathlib import Path
+import signal
+import subprocess
 import sys
+import time
 from typing import Sequence
+from urllib.error import URLError
+from urllib.request import urlopen
 
-from parakeet.audio import list_input_devices
-from parakeet.benchmark import run_benchmark_command
-from parakeet.bridge import run_bridge_server
-from parakeet.dictation import add_cli_arguments
-from parakeet.doctor import collect_doctor_report, doctor_exit_code, render_doctor_text
+from local_ai_dictation.audio import list_input_devices
+from local_ai_dictation.backend_state import backend_payload, get_backend, set_backend, toggle_backend
+from local_ai_dictation.benchmark import run_benchmark_command
+from local_ai_dictation.bridge import run_bridge_server
+from local_ai_dictation.dictation import add_cli_arguments
+from local_ai_dictation.doctor import collect_doctor_report, doctor_exit_code, render_doctor_text
+
+
+def _bridge_health_url(host: str, port: int) -> str:
+    return f"http://{host}:{port}/health"
+
+
+def _wait_for_bridge_ready(host: str, port: int, *, timeout_seconds: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(_bridge_health_url(host, port), timeout=1.0) as response:
+                if int(getattr(response, "status", 200)) == 200:
+                    return True
+        except (URLError, TimeoutError, OSError):
+            pass
+        time.sleep(0.25)
+    return False
+
+
+def _find_bridge_pids(host: str, port: int) -> list[int]:
+    patterns = [
+        f"local-ai-dictation bridge --host {host} --port {port}",
+        f"-m local_ai_dictation.cli bridge --host {host} --port {port}",
+        str(Path.home() / ".local" / "bin" / "local-ai-dictation-bridge"),
+    ]
+    current_pid = os.getpid()
+    pids: list[int] = []
+    for pattern in patterns:
+        completed = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, check=False)
+        if completed.returncode not in {0, 1}:
+            continue
+        for line in completed.stdout.splitlines():
+            pid_text = line.strip()
+            if not pid_text.isdigit():
+                continue
+            pid = int(pid_text)
+            if pid == current_pid or pid in pids:
+                continue
+            pids.append(pid)
+    return pids
+
+
+def _restart_local_bridge(host: str, port: int) -> None:
+    for pid in _find_bridge_pids(host, port):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            continue
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        remaining = _find_bridge_pids(host, port)
+        if not remaining:
+            break
+        time.sleep(0.25)
+
+    for pid in _find_bridge_pids(host, port):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            continue
+
+    launcher = Path.home() / ".local" / "bin" / "local-ai-dictation-bridge"
+    if launcher.exists():
+        subprocess.Popen([str(launcher)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    else:
+        subprocess.Popen(
+            [sys.executable, "-m", "local_ai_dictation.cli", "bridge", "--host", host, "--port", str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    if not _wait_for_bridge_ready(host, port):
+        raise SystemExit(f"bridge restart failed for {host}:{port}")
 
 
 def add_bridge_cli_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--backend",
+        choices=["parakeet", "whisper"],
+        default=None,
+        help="Transcription backend for bridge-controlled dictation sessions.",
+    )
     parser.add_argument(
         "--host",
         default="127.0.0.1",
@@ -82,8 +175,8 @@ def add_bridge_cli_arguments(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="parakeet",
-        description="Packaged Parakeet dictation CLI.",
+        prog="local-ai-dictation",
+        description="Local AI Dictation.",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -122,7 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument(
         "--check-model-cache",
         action="store_true",
-        help="Check local Parakeet cache/import readiness without loading or downloading the model.",
+        help="Check local model cache/import readiness without loading or downloading the model.",
     )
     doctor_parser.set_defaults(handler=_run_doctor_namespace)
 
@@ -192,10 +285,56 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bridge_toggle_parser.set_defaults(handler=_run_bridge_toggle_namespace)
 
+    backend_parser = subparsers.add_parser(
+        "backend",
+        help="Get, set, or toggle the persisted backend selection.",
+        description="Get, set, or toggle the persisted backend selection.",
+    )
+    backend_parser.add_argument(
+        "action",
+        choices=["get", "set", "toggle"],
+        help="Backend state action.",
+    )
+    backend_parser.add_argument(
+        "backend_name",
+        nargs="?",
+        choices=["parakeet", "whisper"],
+        help="Backend to persist when using the set action.",
+    )
+    backend_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit machine-readable JSON.",
+    )
+    backend_parser.add_argument(
+        "--restart-bridge",
+        action="store_true",
+        help="Restart the localhost bridge after changing the preferred backend.",
+    )
+    backend_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bridge host to restart when using --restart-bridge.",
+    )
+    backend_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Bridge port to restart when using --restart-bridge.",
+    )
+    backend_parser.set_defaults(handler=_run_backend_namespace)
+
     gui_parser = subparsers.add_parser(
         "gui",
         help="Run the Electrobun desktop app on the current platform.",
         description="Run the Electrobun desktop app on the current platform.",
+    )
+    gui_parser.add_argument(
+        "--backend",
+        choices=["parakeet", "whisper"],
+        default=None,
+        help="Backend name used when generating the default bridge startup command.",
     )
     gui_parser.add_argument(
         "--host",
@@ -463,7 +602,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_dictation_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.dictation import run_dictation
+    from local_ai_dictation.dictation import run_dictation
 
     return run_dictation(namespace)
 
@@ -513,74 +652,97 @@ def _run_bridge_namespace(namespace: argparse.Namespace) -> int:
     return run_bridge_server(namespace)
 
 
+def _run_backend_namespace(namespace: argparse.Namespace) -> int:
+    action = str(getattr(namespace, "action", "get"))
+    if action == "set":
+        backend_name = getattr(namespace, "backend_name", None)
+        if backend_name is None:
+            raise SystemExit("backend set requires BACKEND_NAME")
+        backend = set_backend(str(backend_name))
+    elif action == "toggle":
+        backend = toggle_backend()
+    else:
+        backend = get_backend()
+
+    if bool(getattr(namespace, "restart_bridge", False)) and action in {"set", "toggle"}:
+        _restart_local_bridge(str(getattr(namespace, "host", "127.0.0.1")), int(getattr(namespace, "port", 8765)))
+
+    payload = backend_payload(backend)
+    if bool(getattr(namespace, "json_output", False)):
+        print(json.dumps(payload))
+    else:
+        print(payload["backend"])
+    return 0
+
+
 def _run_gui_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_command
+    from local_ai_dictation.desktop import run_gui_command
 
     return run_gui_command(namespace)
 
 
 def _run_bridge_toggle_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_bridge_toggle_command
+    from local_ai_dictation.desktop import run_bridge_toggle_command
 
     return run_bridge_toggle_command(namespace)
 
 
 def _run_gui_stage_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_stage_command
+    from local_ai_dictation.desktop import run_gui_stage_command
 
     return run_gui_stage_command(namespace)
 
 
 def _run_gui_package_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_package_command
+    from local_ai_dictation.desktop import run_gui_package_command
 
     return run_gui_package_command(namespace)
 
 
 def _run_gui_package_smoke_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_package_smoke_command
+    from local_ai_dictation.desktop import run_gui_package_smoke_command
 
     return run_gui_package_smoke_command(namespace)
 
 
 def _run_gui_package_automation_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_package_automation_command
+    from local_ai_dictation.desktop import run_gui_package_automation_command
 
     return run_gui_package_automation_command(namespace)
 
 
 def _run_gui_package_bridge_recovery_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_package_bridge_recovery_command
+    from local_ai_dictation.desktop import run_gui_package_bridge_recovery_command
 
     return run_gui_package_bridge_recovery_command(namespace)
 
 
 def _run_gui_package_main_window_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_package_main_window_command
+    from local_ai_dictation.desktop import run_gui_package_main_window_command
 
     return run_gui_package_main_window_command(namespace)
 
 
 def _run_gui_package_tray_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_package_tray_command
+    from local_ai_dictation.desktop import run_gui_package_tray_command
 
     return run_gui_package_tray_command(namespace)
 
 
 def _run_gui_package_hotkey_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_package_hotkey_command
+    from local_ai_dictation.desktop import run_gui_package_hotkey_command
 
     return run_gui_package_hotkey_command(namespace)
 
 
 def _run_gui_package_verify_namespace(namespace: argparse.Namespace) -> int:
-    from parakeet.desktop import run_gui_package_verify_command
+    from local_ai_dictation.desktop import run_gui_package_verify_command
 
     return run_gui_package_verify_command(namespace)
 
 
 def run_dictation_argv(argv: Sequence[str] | None = None) -> int:
-    from parakeet.dictation import build_parser, run_dictation
+    from local_ai_dictation.dictation import build_parser, run_dictation
 
     parser = build_parser()
     actual_argv = sys.argv[1:] if argv is None else list(argv)

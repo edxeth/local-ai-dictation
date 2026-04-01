@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from typing import Any, Callable, Mapping
 
-from parakeet.types import AudioDevice, VadBackend
+from local_ai_dictation.types import AudioDevice, VadBackend
 
 
 PyAudioModule = Any

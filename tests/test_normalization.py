@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from parakeet.benchmark import (
+from local_ai_dictation.benchmark import (
     expected_sidecar_path,
     load_expected_transcript,
     load_normalized_expected_transcript,

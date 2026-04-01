@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from parakeet.model import MODEL_ID, check_model_cache
+from local_ai_dictation.model import MODEL_ID, check_model_cache
 
 
 
@@ -18,7 +18,7 @@ def test_check_model_cache_detects_local_snapshot(tmp_path, monkeypatch):
     snapshot_dir.mkdir(parents=True)
     (snapshot_dir / "config.json").write_text("{}", encoding="utf-8")
 
-    monkeypatch.setattr("parakeet.model._check_import_readiness", lambda: (True, None))
+    monkeypatch.setattr("local_ai_dictation.model._check_import_readiness", lambda: (True, None))
 
     status = check_model_cache(home=home)
 
@@ -36,7 +36,7 @@ def test_check_model_cache_detects_local_snapshot(tmp_path, monkeypatch):
 
 def test_check_model_cache_reports_missing_cache_and_import_failure(tmp_path, monkeypatch):
     home = tmp_path / "home"
-    monkeypatch.setattr("parakeet.model._check_import_readiness", lambda: (False, "nemo import failed"))
+    monkeypatch.setattr("local_ai_dictation.model._check_import_readiness", lambda: (False, "nemo import failed"))
 
     status = check_model_cache(home=home)
 

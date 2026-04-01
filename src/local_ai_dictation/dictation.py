@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Packaged dictation flow for the Parakeet CLI."""
+"""Interactive dictation flow for Local AI Dictation."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import wave
 from contextlib import nullcontext
 from typing import Any, Callable, cast
 
-from parakeet.audio import (
+from local_ai_dictation.audio import (
     VAD_FRAME_SAMPLES,
     VAD_SAMPLE_RATE,
     build_vad_backend,
@@ -35,8 +35,8 @@ from parakeet.audio import (
     resolve_input_device_id,
     resolve_input_sample_rate,
 )
-from parakeet.config import resolve_config
-from parakeet.errors import (
+from local_ai_dictation.config import resolve_config
+from local_ai_dictation.errors import (
     AUDIO_BACKEND_UNREACHABLE,
     MODEL_IMPORT_FAILED,
     MODEL_TRANSCRIBE_FAILED,
@@ -44,8 +44,8 @@ from parakeet.errors import (
     ExitCode,
     ModelError,
 )
-from parakeet.output import emit_transcription_result
-from parakeet.types import DictationConfig, TranscriptionEngine, TranscriptionResult
+from local_ai_dictation.output import emit_transcription_result
+from local_ai_dictation.types import DictationConfig, TranscriptionEngine, TranscriptionResult
 
 
 _shutdown_event = threading.Event()
@@ -84,17 +84,24 @@ def _no_kbi_traceback(exc_type, exc, tb) -> None:
 sys.excepthook = _no_kbi_traceback
 
 
-HELP_DESC = "Parakeet TDT 0.6B v3 dictation with GPU/CPU support, clean prompts, and debug diagnostics."
+HELP_DESC = "Local AI Dictation with selectable Whisper or Parakeet backends."
 HELP_EPILOG = """Examples:
-  parakeet dictation
-  parakeet dictation --debug
-  parakeet dictation --cpu
-  parakeet dictation --list-devices
-  parakeet dictation --input-device 2
+  local-ai-dictation dictation
+  local-ai-dictation dictation --backend whisper
+  local-ai-dictation dictation --debug
+  local-ai-dictation dictation --cpu
+  local-ai-dictation dictation --list-devices
+  local-ai-dictation dictation --input-device 2
 """
 
 
 def add_cli_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument(
+        "--backend",
+        choices=["parakeet", "whisper"],
+        default=None,
+        help="Select the transcription backend",
+    )
     parser.add_argument(
         "-d",
         "--debug",
@@ -170,7 +177,7 @@ def add_cli_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParse
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="parakeet dictation",
+        prog="local-ai-dictation dictation",
         description=HELP_DESC,
         epilog=HELP_EPILOG,
         formatter_class=argparse.RawTextHelpFormatter,
@@ -312,12 +319,17 @@ def save_audio(audio_data: bytes, filename: str, sample_rate: int = 16000) -> No
         wav_file.writeframes(audio_data)
 
 
-def _load_runtime_dependencies(debug: bool):
+def _load_runtime_dependencies(backend: str, debug: bool):
     if not debug:
-        os.environ.setdefault("NEMO_LOG_LEVEL", "ERROR")
+        if backend == "parakeet":
+            os.environ.setdefault("NEMO_LOG_LEVEL", "ERROR")
         _silence_start()
     try:
-        nemo_asr = importlib.import_module("nemo.collections.asr")
+        runtime_module = (
+            importlib.import_module("nemo.collections.asr")
+            if backend == "parakeet"
+            else importlib.import_module("faster_whisper")
+        )
         pyaudio = importlib.import_module("pyaudio")
         pyperclip = importlib.import_module("pyperclip")
         torch = importlib.import_module("torch")
@@ -326,7 +338,7 @@ def _load_runtime_dependencies(debug: bool):
             _silence_stop()
 
     warnings.filterwarnings("ignore")
-    return nemo_asr, pyaudio, pyperclip, torch
+    return runtime_module, pyaudio, pyperclip, torch
 
 
 def list_devices(pyaudio_module: Any) -> int:
@@ -563,7 +575,7 @@ def record_audio_interruptible(
 
 def _load_model(
     config: DictationConfig,
-    nemo_asr: Any,
+    runtime_module: Any,
     torch_module: Any,
     *,
     status_stream=None,
@@ -581,7 +593,24 @@ def _load_model(
     start = time.perf_counter()
     try:
         with load_ctx:
-            model = nemo_asr.models.ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v3")
+            if config.backend == "whisper":
+                from local_ai_dictation.whisper import WHISPER_MODEL_ID, WhisperEngine
+
+                use_cuda = torch_module.cuda.is_available() and not config.cpu
+                device = "cuda" if use_cuda else "cpu"
+                compute_type = "float16" if use_cuda else "int8"
+                model = WhisperEngine(
+                    runtime_module.WhisperModel(WHISPER_MODEL_ID, device=device, compute_type=compute_type),
+                    device=device,
+                    compute_type=compute_type,
+                    model_id=WHISPER_MODEL_ID,
+                )
+            else:
+                model = runtime_module.models.ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v3")
+                use_cuda = torch_module.cuda.is_available() and not config.cpu
+                device = "cuda" if use_cuda else "cpu"
+                model.to(device)
+                model.eval()
     except Exception as exc:
         raise ModelError(MODEL_IMPORT_FAILED, str(exc)) from exc
     finally:
@@ -589,10 +618,6 @@ def _load_model(
         stop_spinner.set()
         spinner_thread.join()
 
-    use_cuda = torch_module.cuda.is_available() and not config.cpu
-    device = "cuda" if use_cuda else "cpu"
-    model.to(device)
-    model.eval()
     return model, use_cuda, start, end
 
 
@@ -627,7 +652,7 @@ def _transcribe_once(
             transcript_text = getattr(first, "text", first if isinstance(first, str) else str(first))
         else:
             transcript_text = str(result)
-        transcription = TranscriptionResult(text=transcript_text)
+        transcription = TranscriptionResult(text=transcript_text, metadata={"backend": config.backend})
         return transcription, temp_path, start, time.perf_counter()
     except Exception as exc:
         raise ModelError(MODEL_TRANSCRIBE_FAILED, str(exc)) from exc
@@ -641,14 +666,14 @@ def _run_bridge_controlled_dictation(
     *,
     pyaudio_module: Any,
     pyperclip_module: Any,
-    nemo_asr: Any,
+    runtime_module: Any,
     torch_module: Any,
 ) -> int:
     status_stream = _status_stream(config)
     _bridge_stop_event.clear()
 
     try:
-        model, _use_cuda, _load_start, _load_end = _load_model(config, nemo_asr, torch_module)
+        model, _use_cuda, _load_start, _load_end = _load_model(config, runtime_module, torch_module)
     except ModelError as exc:
         print(f"❌ Error: {exc}", file=status_stream)
         return int(ExitCode.ERROR)
@@ -707,9 +732,13 @@ def run_dictation(args: argparse.Namespace) -> int:
     configure_logging(config, status_stream=status_stream)
     print("Starting...", file=status_stream, flush=True)
 
-    nemo_asr, pyaudio_module, pyperclip_module, torch_module = _load_runtime_dependencies(
-        config.debug
-    )
+    try:
+        runtime_module, pyaudio_module, pyperclip_module, torch_module = _load_runtime_dependencies(
+            config.backend,
+            config.debug,
+        )
+    except TypeError:
+        runtime_module, pyaudio_module, pyperclip_module, torch_module = _load_runtime_dependencies(config.debug)
 
     if config.list_devices:
         return list_devices(pyaudio_module)
@@ -722,12 +751,12 @@ def run_dictation(args: argparse.Namespace) -> int:
             config,
             pyaudio_module=pyaudio_module,
             pyperclip_module=pyperclip_module,
-            nemo_asr=nemo_asr,
+            runtime_module=runtime_module,
             torch_module=torch_module,
         )
 
     try:
-        model, use_cuda, load_start, load_end = _load_model(config, nemo_asr, torch_module)
+        model, use_cuda, load_start, load_end = _load_model(config, runtime_module, torch_module)
     except ModelError as exc:
         print(f"❌ Error: {exc}", file=status_stream)
         return int(ExitCode.ERROR)
@@ -735,7 +764,10 @@ def run_dictation(args: argparse.Namespace) -> int:
     if _shutdown_event.is_set():
         return int(ExitCode.OK)
 
-    print("🚀 PARAKEET TDT 0.6B V3", file=status_stream)
+    if config.backend == "whisper":
+        print("🚀 LOCAL AI DICTATION · WHISPER DISTIL LARGE V3.5", file=status_stream)
+    else:
+        print("🚀 LOCAL AI DICTATION · PARAKEET TDT 0.6B V3", file=status_stream)
     if torch_module.cuda.is_available():
         print(f"✅ GPU: {torch_module.cuda.get_device_name(0)}", file=status_stream)
     print("=" * 60, file=status_stream)
@@ -745,8 +777,14 @@ def run_dictation(args: argparse.Namespace) -> int:
 
     if config.debug:
         model_parameters = cast(Any, model).parameters()
+        print(f"Backend: {config.backend}", file=status_stream)
         print(f"Model device: {next(model_parameters).device}", file=status_stream)
-        if use_cuda:
+        if config.backend == "whisper":
+            print(
+                f"Compute type: {getattr(model, '_parakeet_compute_type', 'unknown')}",
+                file=status_stream,
+            )
+        elif use_cuda:
             capability = torch_module.cuda.get_device_capability()
             print(f"CUDA capability: {capability[0]}.{capability[1]}", file=status_stream)
             print(
@@ -804,7 +842,7 @@ def run_dictation(args: argparse.Namespace) -> int:
                     f"Audio length: {seconds:.2f}s | Record: {record_end - record_start:.3f}s | Infer: {infer_end - infer_start:.3f}s",
                     file=status_stream,
                 )
-                if use_cuda:
+                if use_cuda and config.backend == "parakeet":
                     print(
                         f"GPU alloc (MiB) after infer: {torch_module.cuda.memory_allocated() / 1024**2:.2f}",
                         file=status_stream,

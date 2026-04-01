@@ -1,4 +1,4 @@
-"""Configuration parsing and precedence resolution for Parakeet."""
+"""Configuration parsing and precedence resolution for Local AI Dictation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from parakeet.types import DictationConfig, TranscriptFormat
+from local_ai_dictation.backend_state import get_backend
+from local_ai_dictation.types import DictationConfig, TranscriptFormat
 
 try:  # pragma: no cover - exercised indirectly on Python 3.10
     import tomllib
@@ -15,7 +16,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for Python < 3.11
     import tomli as tomllib  # type: ignore[no-redef]
 
 
-CONFIG_PATH = Path.home() / ".config" / "parakeet-dictation" / "config.toml"
+CONFIG_PATH = Path.home() / ".config" / "local-ai-dictation" / "config.toml"
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
@@ -54,7 +55,15 @@ def _parse_format(value: Any) -> TranscriptFormat:
     return text  # type: ignore[return-value]
 
 
+def _parse_backend(value: Any) -> str:
+    text = str(value).strip().lower()
+    if text not in {"parakeet", "whisper"}:
+        raise ValueError(f"Invalid backend: {value!r}")
+    return text
+
+
 FIELD_PARSERS: dict[str, Callable[[Any], Any]] = {
+    "backend": _parse_backend,
     "cpu": _parse_bool,
     "input_device": _parse_optional_device,
     "vad": _parse_bool,
@@ -68,19 +77,21 @@ FIELD_PARSERS: dict[str, Callable[[Any], Any]] = {
 }
 
 ENV_FIELD_MAP = {
-    "PARAKEET_CPU": "cpu",
-    "PARAKEET_INPUT_DEVICE": "input_device",
-    "PARAKEET_VAD": "vad",
-    "PARAKEET_MAX_SILENCE_MS": "max_silence_ms",
-    "PARAKEET_MIN_SPEECH_MS": "min_speech_ms",
-    "PARAKEET_VAD_MODE": "vad_mode",
-    "PARAKEET_FORMAT": "format",
-    "PARAKEET_OUTPUT_FILE": "output_file",
-    "PARAKEET_CLIPBOARD": "clipboard",
-    "PARAKEET_DEBUG": "debug",
+    "LOCAL_AI_DICTATION_BACKEND": "backend",
+    "LOCAL_AI_DICTATION_CPU": "cpu",
+    "LOCAL_AI_DICTATION_INPUT_DEVICE": "input_device",
+    "LOCAL_AI_DICTATION_VAD": "vad",
+    "LOCAL_AI_DICTATION_MAX_SILENCE_MS": "max_silence_ms",
+    "LOCAL_AI_DICTATION_MIN_SPEECH_MS": "min_speech_ms",
+    "LOCAL_AI_DICTATION_VAD_MODE": "vad_mode",
+    "LOCAL_AI_DICTATION_FORMAT": "format",
+    "LOCAL_AI_DICTATION_OUTPUT_FILE": "output_file",
+    "LOCAL_AI_DICTATION_CLIPBOARD": "clipboard",
+    "LOCAL_AI_DICTATION_DEBUG": "debug",
 }
 
 DEFAULTS: dict[str, Any] = {
+    "backend": "whisper",
     "cpu": False,
     "input_device": None,
     "vad": False,
@@ -132,6 +143,7 @@ def load_env(env: Mapping[str, str] | None = None) -> dict[str, Any]:
 
 def load_cli_overrides(namespace: Namespace) -> dict[str, Any]:
     values = {
+        "backend": getattr(namespace, "backend", None),
         "cpu": getattr(namespace, "cpu", None),
         "input_device": getattr(namespace, "input_device", None),
         "vad": getattr(namespace, "vad", None),
@@ -153,6 +165,7 @@ def resolve_config(
     config_path: Path | None = None,
 ) -> DictationConfig:
     resolved = dict(DEFAULTS)
+    resolved["backend"] = get_backend(env)
     resolved.update(load_config_file(config_path))
     resolved.update(load_env(env))
     resolved.update(load_cli_overrides(namespace))
@@ -161,6 +174,7 @@ def resolve_config(
     list_devices = bool(getattr(namespace, "list_devices", False))
 
     return DictationConfig(
+        backend=resolved["backend"],
         cpu=bool(resolved["cpu"]),
         input_device=resolved["input_device"],
         vad=bool(resolved["vad"]),

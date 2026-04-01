@@ -9,7 +9,7 @@ It provides:
 - RPC between the desktop process and renderer
 - desktop APIs like window, tray, and global shortcuts
 
-In this repo it powers the `Parakeet Dictation GUI` and talks to the Python bridge over HTTP.
+In this repo it powers the `Local AI Dictation` and talks to the Python bridge over HTTP.
 
 ## How this repo uses it
 
@@ -18,12 +18,12 @@ Key files:
 - `desktop/electrobun/src/mainview/index.ts` — renderer UI and renderer snapshot/test hooks
 - `desktop/electrobun/package.json` — Electrobun package plus `bun run check`
 - `desktop/electrobun/electrobun.config.ts` — cross-platform Electrobun build config
-- `src/parakeet/desktop.py` — native GUI launch plus WSL-side staging, Windows packaging, packaged-app smoke, and unattended verify entrypoints
-- `src/parakeet/cli.py` — exposes `gui` and `gui-package*` commands
+- `src/local_ai_dictation/desktop.py` — native GUI launch plus WSL-side staging, Windows packaging, packaged-app smoke, and unattended verify entrypoints
+- `src/local_ai_dictation/cli.py` — exposes `gui` and `gui-package*` commands
 
 Current bridge assumptions:
-- GUI reads `PARAKEET_BRIDGE_URL`
-- GUI reads `PARAKEET_BRIDGE_COMMAND`
+- GUI reads `LOCAL_AI_DICTATION_BRIDGE_URL`
+- GUI reads `LOCAL_AI_DICTATION_BRIDGE_COMMAND`
 - GUI expects the backend to expose `/health`, `/session/start`, `/session/stop`, `/session/toggle`, and `/session/clear-history`
 
 ## Supported topology and boundaries
@@ -31,7 +31,7 @@ Current bridge assumptions:
 Supported in this repo:
 - native Linux Electrobun GUI over localhost
 - packaged Windows 11 x64 Electrobun GUI
-- `parakeet bridge` running separately inside WSL over `127.0.0.1` for the Windows workflow
+- `local-ai-dictation bridge` running separately inside WSL over `127.0.0.1` for the Windows workflow
 - WebView2 renderer on Windows
 
 Not supported in this release:
@@ -63,8 +63,8 @@ Important caveats for future tasks:
 The repo usually lives at a `\\wsl.localhost\...` path when opened from WSL. Windows Bun/Electrobun tooling must not build from that UNC working directory.
 
 Use the repo-supported handoff instead:
-- `parakeet gui-stage` copies `desktop/electrobun/` into `%LOCALAPPDATA%\ParakeetDictation\staging\...`
-- `parakeet gui-package` runs Windows `bun install` and `bunx electrobun build --env=stable` from that drive-backed staging path
+- `local-ai-dictation gui-stage` copies `desktop/electrobun/` into `%LOCALAPPDATA%\LocalAIDictation\staging\...`
+- `local-ai-dictation gui-package` runs Windows `bun install` and `bunx electrobun build --env=stable` from that drive-backed staging path
 - packaging artifacts are emitted from the staged desktop folder under `build/stable-win-x64/` and `artifacts/`
 
 ## Canonical Windows commands
@@ -72,9 +72,9 @@ Use the repo-supported handoff instead:
 From WSL with the project virtualenv active:
 
 ```bash
-.venv/bin/python -m parakeet.cli gui-stage --json
-.venv/bin/python -m parakeet.cli gui-package --json
-.venv/bin/python -m parakeet.cli gui-package-verify --json --timeout-seconds 240
+.venv/bin/local-ai-dictation gui-stage --json
+.venv/bin/local-ai-dictation gui-package --json
+.venv/bin/local-ai-dictation gui-package-verify --json --timeout-seconds 240
 ```
 
 Meaning:
@@ -93,7 +93,7 @@ Meaning:
 ## Development vs release workflow
 
 Development inside Linux/WSL can use:
-- `parakeet gui`
+- `local-ai-dictation gui`
 - `cd desktop/electrobun && bun install && bun run start`
 
 Those commands are for local dev ergonomics. The supported packaged Windows workflow is still driven by `gui-package` and verified by `gui-package-verify`.

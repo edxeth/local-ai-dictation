@@ -13,11 +13,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-main = importlib.import_module("parakeet.cli").main
-dictation_module = importlib.import_module("parakeet.dictation")
-output_module = importlib.import_module("parakeet.output")
-DictationConfig = importlib.import_module("parakeet.types").DictationConfig
-TranscriptionResult = importlib.import_module("parakeet.types").TranscriptionResult
+main = importlib.import_module("local_ai_dictation.cli").main
+dictation_module = importlib.import_module("local_ai_dictation.dictation")
+output_module = importlib.import_module("local_ai_dictation.output")
+DictationConfig = importlib.import_module("local_ai_dictation.types").DictationConfig
+TranscriptionResult = importlib.import_module("local_ai_dictation.types").TranscriptionResult
 
 
 class _ClipboardFailure:
@@ -116,23 +116,23 @@ def test_dictation_json_mode_keeps_status_off_stdout(monkeypatch, capsys):
     dictation_module._shutdown_event.clear()
 
     monkeypatch.setattr(
-        "parakeet.dictation._load_runtime_dependencies",
+        "local_ai_dictation.dictation._load_runtime_dependencies",
         lambda debug: (object(), object(), _ClipboardSuccess(), _FakeTorch()),
     )
     monkeypatch.setattr(
-        "parakeet.dictation._load_model",
+        "local_ai_dictation.dictation._load_model",
         lambda config, nemo_asr, torch_module: (_FakeModel(), False, 0.0, 0.0),
     )
     monkeypatch.setattr(
-        "parakeet.dictation.wait_for_enter_interruptible",
+        "local_ai_dictation.dictation.wait_for_enter_interruptible",
         lambda *args, **kwargs: next(waits),
     )
     monkeypatch.setattr(
-        "parakeet.dictation.record_audio_interruptible",
+        "local_ai_dictation.dictation.record_audio_interruptible",
         lambda config, pyaudio_module, sample_rate=16000: b"\x00\x00",
     )
     monkeypatch.setattr(
-        "parakeet.dictation._transcribe_once",
+        "local_ai_dictation.dictation._transcribe_once",
         lambda config, model, audio_data, sample_rate: (
             TranscriptionResult(text="hello world", device="cpu"),
             "/tmp/fake.wav",
@@ -140,7 +140,7 @@ def test_dictation_json_mode_keeps_status_off_stdout(monkeypatch, capsys):
             0.0,
         ),
     )
-    monkeypatch.setattr("parakeet.dictation.os.unlink", lambda path: None)
+    monkeypatch.setattr("local_ai_dictation.dictation.os.unlink", lambda path: None)
 
     exit_code = main(["dictation", "--format", "json", "--no-clipboard"])
     captured = capsys.readouterr()

@@ -1,4 +1,4 @@
-"""Transcript output rendering and delivery helpers for Parakeet."""
+"""Transcript output rendering and delivery helpers for Local AI Dictation."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 import sys
 from typing import Any, TextIO
 
-from parakeet.errors import AppError, CLIPBOARD_UNAVAILABLE
-from parakeet.types import DictationConfig, TranscriptionResult
+from local_ai_dictation.errors import AppError, CLIPBOARD_UNAVAILABLE
+from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
 
 _DICTATION_JSON_SCHEMA_VERSION = 1

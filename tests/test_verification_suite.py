@@ -12,9 +12,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-load_expected_transcript = importlib.import_module("parakeet.benchmark").load_expected_transcript
-main = importlib.import_module("parakeet.cli").main
-TranscriptionResult = importlib.import_module("parakeet.types").TranscriptionResult
+load_expected_transcript = importlib.import_module("local_ai_dictation.benchmark").load_expected_transcript
+main = importlib.import_module("local_ai_dictation.cli").main
+TranscriptionResult = importlib.import_module("local_ai_dictation.types").TranscriptionResult
 
 
 class _FakeEngine:
@@ -24,9 +24,9 @@ class _FakeEngine:
 def test_repo_benchmark_fixture_asset_is_exercised_offline(monkeypatch, repo_fixture_dir: Path, capsys):
     fixture = repo_fixture_dir / "short_16k.wav"
 
-    monkeypatch.setattr("parakeet.benchmark.load_engine", lambda config: _FakeEngine())
+    monkeypatch.setattr("local_ai_dictation.benchmark.load_engine", lambda config: _FakeEngine())
     monkeypatch.setattr(
-        "parakeet.benchmark.transcribe_wav",
+        "local_ai_dictation.benchmark.transcribe_wav",
         lambda engine, path: TranscriptionResult(text="", device="cpu"),
     )
 

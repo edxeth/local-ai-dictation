@@ -4,9 +4,9 @@ import json
 import math
 import wave
 
-from parakeet.benchmark import benchmark_fixture
-from parakeet.cli import main
-from parakeet.types import TranscriptionResult
+from local_ai_dictation.benchmark import benchmark_fixture
+from local_ai_dictation.cli import main
+from local_ai_dictation.types import TranscriptionResult
 
 
 class _FakeEngine:
@@ -67,11 +67,11 @@ def test_benchmark_command_emits_json_schema(monkeypatch, tmp_path, capsys):
     expected.write_text("", encoding="utf-8")
 
     monkeypatch.setattr(
-        "parakeet.benchmark.load_engine",
+        "local_ai_dictation.benchmark.load_engine",
         lambda config: _FakeEngine(),
     )
     monkeypatch.setattr(
-        "parakeet.benchmark.transcribe_wav",
+        "local_ai_dictation.benchmark.transcribe_wav",
         lambda engine, path: TranscriptionResult(text="", device="cpu"),
     )
 
@@ -111,9 +111,9 @@ def test_benchmark_command_redirects_noisy_runtime_stdout_away_from_json(monkeyp
         print("runtime-info-log")
         return _FakeEngine()
 
-    monkeypatch.setattr("parakeet.benchmark.load_engine", noisy_load_engine)
+    monkeypatch.setattr("local_ai_dictation.benchmark.load_engine", noisy_load_engine)
     monkeypatch.setattr(
-        "parakeet.benchmark.transcribe_wav",
+        "local_ai_dictation.benchmark.transcribe_wav",
         lambda engine, path: TranscriptionResult(text="", device="cpu"),
     )
 

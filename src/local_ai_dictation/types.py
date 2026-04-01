@@ -1,4 +1,4 @@
-"""Stable internal data models and protocol boundaries for Parakeet."""
+"""Stable internal data models and protocol boundaries for Local AI Dictation."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any, Literal, Protocol, Sequence
 
 SchemaVersion = Literal[1]
 TranscriptFormat = Literal["text", "json"]
+ModelBackend = Literal["parakeet", "whisper"]
 IssueSeverity = Literal["warn", "fail"]
 OverallStatus = Literal["ok", "warn", "fail"]
 
@@ -65,6 +66,7 @@ class BenchmarkReport:
 
 @dataclass(frozen=True)
 class DictationConfig:
+    backend: ModelBackend = "whisper"
     cpu: bool = False
     input_device: int | str | None = None
     vad: bool = False
@@ -84,6 +86,7 @@ class DictationConfig:
         if output_file in {"", None}:
             output_file = None
         return cls(
+            backend=getattr(namespace, "backend", "whisper"),
             cpu=bool(getattr(namespace, "cpu", False)),
             input_device=getattr(namespace, "input_device", None),
             vad=bool(getattr(namespace, "vad", False)),

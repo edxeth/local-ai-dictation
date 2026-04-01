@@ -1,4 +1,4 @@
-"""Fixture-based benchmark helpers and CLI support for Parakeet."""
+"""Fixture-based benchmark helpers and CLI support for Local AI Dictation."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ import sys
 import time
 import wave
 
-from parakeet.errors import AppError, ExitCode, MODEL_TRANSCRIBE_FAILED
-from parakeet.model import load_engine, transcribe_wav
-from parakeet.types import BenchmarkReport, DictationConfig
+from local_ai_dictation.errors import AppError, ExitCode, MODEL_TRANSCRIBE_FAILED
+from local_ai_dictation.model import load_engine, transcribe_wav
+from local_ai_dictation.types import BenchmarkReport, DictationConfig
 import unicodedata
 
 

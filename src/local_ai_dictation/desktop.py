@@ -1,4 +1,4 @@
-"""Desktop app launch helpers for the Parakeet bridge GUI."""
+"""Desktop app launch helpers for Local AI Dictation."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from typing import Any, Callable
 import zipfile
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from local_ai_dictation.backend_state import get_backend
 
 
 class DesktopAppError(RuntimeError):
@@ -43,17 +45,21 @@ def bridge_url(host: str, port: int) -> str:
     return f"http://{host}:{port}"
 
 
-def bridge_start_command(host: str, port: int) -> str:
-    return f"parakeet bridge --host {host} --port {port}"
+def bridge_start_command(host: str, port: int, *, backend: str | None = None) -> str:
+    resolved_backend = get_backend() if backend in {None, ""} else str(backend)
+    command = f"local-ai-dictation bridge --host {host} --port {port}"
+    if resolved_backend != "parakeet":
+        command += f" --backend {resolved_backend}"
+    return command
 
 
 def ensure_desktop_app_available(app_dir: Path | None = None) -> Path:
     resolved_app_dir = desktop_app_dir() if app_dir is None else app_dir
     if not resolved_app_dir.exists():
-        raise DesktopAppError(f"Parakeet GUI app not found at {resolved_app_dir}")
+        raise DesktopAppError(f"Local AI Dictation GUI app not found at {resolved_app_dir}")
     package_json = resolved_app_dir / "package.json"
     if not package_json.exists():
-        raise DesktopAppError(f"Parakeet GUI package manifest not found at {package_json}")
+        raise DesktopAppError(f"Local AI Dictation GUI package manifest not found at {package_json}")
     return resolved_app_dir
 
 
@@ -92,7 +98,7 @@ def windows_path_from_wsl(path: Path) -> str:
 
 def windows_stage_root() -> Path:
     local_appdata = read_windows_env_var("LOCALAPPDATA")
-    return wsl_path_from_windows(local_appdata) / "ParakeetDictation" / "staging"
+    return wsl_path_from_windows(local_appdata) / "LocalAIDictation" / "staging"
 
 
 def windows_local_appdata_root() -> Path:
@@ -125,23 +131,23 @@ def stage_windows_desktop_app(app_dir: Path | None = None) -> dict[str, str]:
 def ensure_gui_dependencies(app_dir: Path, bun_path: str) -> None:
     if (app_dir / "node_modules").exists():
         return
-    print(f"Installing Parakeet GUI dependencies in {app_dir}...")
+    print(f"Installing Local AI Dictation GUI dependencies in {app_dir}...")
     completed = subprocess.run([bun_path, "install"], cwd=app_dir, check=False)
     if completed.returncode != 0:
-        raise DesktopAppError("Failed to install Parakeet GUI dependencies with `bun install`.")
+        raise DesktopAppError("Failed to install Local AI Dictation GUI dependencies with `bun install`.")
 
 
 def default_gui_log_dir(env: dict[str, str] | None = None) -> Path | None:
     source = os.environ if env is None else env
     local_appdata = source.get("LOCALAPPDATA")
     if local_appdata:
-        return Path(local_appdata) / "parakeet.desktop.local" / "stable" / "logs"
+        return Path(local_appdata) / "local-ai-dictation.desktop.local" / "stable" / "logs"
     xdg_state_home = source.get("XDG_STATE_HOME")
     if xdg_state_home:
-        return Path(xdg_state_home) / "parakeet" / "desktop"
+        return Path(xdg_state_home) / "local-ai-dictation" / "desktop"
     home = source.get("HOME")
     if home:
-        return Path(home) / ".local" / "state" / "parakeet" / "desktop"
+        return Path(home) / ".local" / "state" / "local-ai-dictation" / "desktop"
     return None
 
 
@@ -151,16 +157,17 @@ def build_gui_environment(
     *,
     bridge_command: str | None = None,
     hotkey: str | None = None,
+    backend: str | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
-    env["PARAKEET_BRIDGE_URL"] = bridge_url(host, port)
-    env["PARAKEET_BRIDGE_COMMAND"] = bridge_start_command(host, port) if bridge_command is None else bridge_command
+    env["LOCAL_AI_DICTATION_BRIDGE_URL"] = bridge_url(host, port)
+    env["LOCAL_AI_DICTATION_BRIDGE_COMMAND"] = bridge_start_command(host, port, backend=backend) if bridge_command is None else bridge_command
     if hotkey:
-        env["PARAKEET_HOTKEY"] = hotkey
+        env["LOCAL_AI_DICTATION_HOTKEY"] = hotkey
     log_dir = default_gui_log_dir(env)
     if log_dir is not None:
-        env.setdefault("PARAKEET_GUI_LOG_PATH", str(log_dir / "startup.log"))
-        env.setdefault("PARAKEET_GUI_STARTUP_DIAGNOSTICS_PATH", str(log_dir / "startup-diagnostics.json"))
+        env.setdefault("LOCAL_AI_DICTATION_GUI_LOG_PATH", str(log_dir / "startup.log"))
+        env.setdefault("LOCAL_AI_DICTATION_GUI_STARTUP_DIAGNOSTICS_PATH", str(log_dir / "startup-diagnostics.json"))
     return env
 
 
@@ -174,11 +181,11 @@ def ensure_bun_available() -> str:
 def _terminate_existing_native_gui_processes() -> None:
     current_pid = os.getpid()
     patterns = [
-        "parakeet gui --host",
+        "local-ai-dictation gui --host",
         "bun run start",
         "electrobun dev",
-        "parakeet-desktop-dev/bin/launcher",
-        "parakeet-desktop-dev/bin/bun",
+        "local-ai-dictation-desktop-dev/bin/launcher",
+        "local-ai-dictation-desktop-dev/bin/bun",
     ]
     for pattern in patterns:
         completed = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, check=False)
@@ -212,6 +219,7 @@ def run_gui_command(namespace: Any) -> int:
             int(getattr(namespace, "port", DEFAULT_BRIDGE_PORT)),
             bridge_command=getattr(namespace, "bridge_command", None),
             hotkey=getattr(namespace, "hotkey", None),
+            backend=getattr(namespace, "backend", None),
         ),
         check=False,
     )
@@ -270,8 +278,14 @@ def build_bridge_command(namespace: Any) -> list[str]:
     command = [
         sys.executable,
         "-m",
-        "parakeet.cli",
+        "local_ai_dictation.cli",
         "bridge",
+    ]
+    namespace_backend = getattr(namespace, "backend", None)
+    backend = get_backend() if namespace_backend in {None, ""} else str(namespace_backend)
+    if backend != "parakeet":
+        command.extend(["--backend", backend])
+    command.extend([
         "--host",
         host,
         "--port",
@@ -284,7 +298,7 @@ def build_bridge_command(namespace: Any) -> list[str]:
         str(int(getattr(namespace, "vad_mode", 2))),
         "--log-file",
         str(getattr(namespace, "log_file", "transcriber.debug.log")),
-    ]
+    ])
     if bool(getattr(namespace, "cpu", False)):
         command.append("--cpu")
     input_device = getattr(namespace, "input_device", None)
@@ -386,7 +400,7 @@ def embed_windows_exe_icon(executable_path: Path, icon_path: Path, rcedit_path: 
 
 
 def rebuild_windows_setup_archive_with_icons(archive_path: Path, icon_path: Path, rcedit_path: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="parakeet-icon-archive-") as temp_dir_str:
+    with tempfile.TemporaryDirectory(prefix="local-ai-dictation-icon-archive-") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         completed = subprocess.run(
             ["tar", "--zstd", "-xf", str(archive_path), "-C", str(temp_dir)],
@@ -441,14 +455,14 @@ def rebuild_windows_artifact_zip(app_dir: Path) -> None:
 
 
 def apply_windows_packaged_icon_workaround(app_dir: Path) -> None:
-    icon_path = app_dir / "src" / "mainview" / "assets" / "parakeet-icon.ico"
+    icon_path = app_dir / "src" / "mainview" / "assets" / "local-ai-dictation-icon.ico"
     rcedit_path = app_dir / "node_modules" / "rcedit" / "bin" / "rcedit-x64.exe"
     build_dir = app_dir / "build" / "stable-win-x64"
     if not icon_path.exists() or not rcedit_path.exists() or not build_dir.exists():
         return
 
     targets: list[Path] = []
-    bundle_bin_dir = build_dir / "parakeet-desktop" / "bin"
+    bundle_bin_dir = build_dir / "local-ai-dictation-desktop" / "bin"
     targets.extend(sorted(bundle_bin_dir.glob("*.exe")))
     targets.extend(
         [
@@ -503,7 +517,7 @@ def collect_windows_package_artifacts(app_dir: Path) -> dict[str, Any]:
     metadata = _read_package_metadata(metadata_path)
     identifier = str(metadata.get("identifier", ""))
     channel = str(metadata.get("channel", "stable"))
-    app_name = str(metadata.get("name", "parakeet-desktop"))
+    app_name = str(metadata.get("name", "local-ai-dictation-desktop"))
     if not identifier:
         raise DesktopAppError(f"Windows installer metadata at {metadata_path} does not include an identifier.")
 
@@ -881,7 +895,7 @@ def _decode_last_json_object(text: str, *, command: list[str]) -> dict[str, Any]
 
 
 def run_repo_cli_json(command_args: list[str]) -> dict[str, Any]:
-    command = [sys.executable, "-m", "parakeet.cli", *command_args, "--json"]
+    command = [sys.executable, "-m", "local_ai_dictation.cli", *command_args, "--json"]
     completed = subprocess.run(
         command,
         cwd=repo_root(),
@@ -1007,8 +1021,8 @@ def run_gui_package_automation_command(namespace: Any) -> int:
     launcher_process = launch_wsl_windows_executable(
         installed_paths["launcher_path"],
         env={
-            "PARAKEET_GUI_E2E": "1",
-            "PARAKEET_GUI_E2E_PORT": str(automation_port),
+            "LOCAL_AI_DICTATION_GUI_E2E": "1",
+            "LOCAL_AI_DICTATION_GUI_E2E_PORT": str(automation_port),
         },
     )
     initial_state: dict[str, Any] | None = None
@@ -1114,10 +1128,10 @@ def run_gui_package_bridge_recovery_command(namespace: Any) -> int:
     launcher_process = launch_wsl_windows_executable(
         installed_paths["launcher_path"],
         env={
-            "PARAKEET_GUI_E2E": "1",
-            "PARAKEET_GUI_E2E_PORT": str(automation_port),
-            "PARAKEET_BRIDGE_URL": expected_bridge_url,
-            "PARAKEET_BRIDGE_COMMAND": expected_bridge_command,
+            "LOCAL_AI_DICTATION_GUI_E2E": "1",
+            "LOCAL_AI_DICTATION_GUI_E2E_PORT": str(automation_port),
+            "LOCAL_AI_DICTATION_BRIDGE_URL": expected_bridge_url,
+            "LOCAL_AI_DICTATION_BRIDGE_COMMAND": expected_bridge_command,
         },
     )
     bridge_process: subprocess.Popen[str] | None = None
@@ -1152,7 +1166,7 @@ def run_gui_package_bridge_recovery_command(namespace: Any) -> int:
             [
                 sys.executable,
                 "-m",
-                "parakeet.cli",
+                "local_ai_dictation.cli",
                 "bridge",
                 "--host",
                 host,
@@ -1162,10 +1176,10 @@ def run_gui_package_bridge_recovery_command(namespace: Any) -> int:
             cwd=repo_root(),
             env={
                 **os.environ,
-                "PARAKEET_E2E_MODE": "1",
-                "PARAKEET_E2E_TRANSCRIPT": "offline online recovery transcript",
-                "PARAKEET_E2E_START_DELAY_MS": "30",
-                "PARAKEET_E2E_STOP_DELAY_MS": "40",
+                "LOCAL_AI_DICTATION_E2E_MODE": "1",
+                "LOCAL_AI_DICTATION_E2E_TRANSCRIPT": "offline online recovery transcript",
+                "LOCAL_AI_DICTATION_E2E_START_DELAY_MS": "30",
+                "LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS": "40",
             },
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1174,7 +1188,7 @@ def run_gui_package_bridge_recovery_command(namespace: Any) -> int:
         if not wait_for_bridge(host, bridge_port, timeout_seconds=10.0):
             exit_code = bridge_process.poll()
             raise DesktopAppError(
-                f"Parakeet bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
+                f"Local AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
             )
 
         def _recovered(state: dict[str, Any]) -> bool:
@@ -1304,7 +1318,7 @@ def run_gui_package_main_window_command(namespace: Any) -> int:
         [
             sys.executable,
             "-m",
-            "parakeet.cli",
+            "local_ai_dictation.cli",
             "bridge",
             "--host",
             host,
@@ -1314,10 +1328,10 @@ def run_gui_package_main_window_command(namespace: Any) -> int:
         cwd=repo_root(),
         env={
             **os.environ,
-            "PARAKEET_E2E_MODE": "1",
-            "PARAKEET_E2E_TRANSCRIPT": expected_transcript,
-            "PARAKEET_E2E_START_DELAY_MS": "30",
-            "PARAKEET_E2E_STOP_DELAY_MS": "40",
+            "LOCAL_AI_DICTATION_E2E_MODE": "1",
+            "LOCAL_AI_DICTATION_E2E_TRANSCRIPT": expected_transcript,
+            "LOCAL_AI_DICTATION_E2E_START_DELAY_MS": "30",
+            "LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS": "40",
         },
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1327,16 +1341,16 @@ def run_gui_package_main_window_command(namespace: Any) -> int:
         exit_code = bridge_process.poll()
         _stop_process(bridge_process)
         raise DesktopAppError(
-            f"Parakeet bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
+            f"Local AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
         )
 
     launcher_process = launch_wsl_windows_executable(
         installed_paths["launcher_path"],
         env={
-            "PARAKEET_GUI_E2E": "1",
-            "PARAKEET_GUI_E2E_PORT": str(automation_port),
-            "PARAKEET_BRIDGE_URL": expected_bridge_url,
-            "PARAKEET_BRIDGE_COMMAND": expected_bridge_command,
+            "LOCAL_AI_DICTATION_GUI_E2E": "1",
+            "LOCAL_AI_DICTATION_GUI_E2E_PORT": str(automation_port),
+            "LOCAL_AI_DICTATION_BRIDGE_URL": expected_bridge_url,
+            "LOCAL_AI_DICTATION_BRIDGE_COMMAND": expected_bridge_command,
         },
     )
     initial_state: dict[str, Any] | None = None
@@ -1527,7 +1541,7 @@ def run_gui_package_tray_command(namespace: Any) -> int:
         [
             sys.executable,
             "-m",
-            "parakeet.cli",
+            "local_ai_dictation.cli",
             "bridge",
             "--host",
             host,
@@ -1537,10 +1551,10 @@ def run_gui_package_tray_command(namespace: Any) -> int:
         cwd=repo_root(),
         env={
             **os.environ,
-            "PARAKEET_E2E_MODE": "1",
-            "PARAKEET_E2E_TRANSCRIPT": expected_transcript,
-            "PARAKEET_E2E_START_DELAY_MS": "30",
-            "PARAKEET_E2E_STOP_DELAY_MS": "40",
+            "LOCAL_AI_DICTATION_E2E_MODE": "1",
+            "LOCAL_AI_DICTATION_E2E_TRANSCRIPT": expected_transcript,
+            "LOCAL_AI_DICTATION_E2E_START_DELAY_MS": "30",
+            "LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS": "40",
         },
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1550,16 +1564,16 @@ def run_gui_package_tray_command(namespace: Any) -> int:
         exit_code = bridge_process.poll()
         _stop_process(bridge_process)
         raise DesktopAppError(
-            f"Parakeet bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
+            f"Local AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
         )
 
     launcher_process = launch_wsl_windows_executable(
         installed_paths["launcher_path"],
         env={
-            "PARAKEET_GUI_E2E": "1",
-            "PARAKEET_GUI_E2E_PORT": str(automation_port),
-            "PARAKEET_BRIDGE_URL": expected_bridge_url,
-            "PARAKEET_BRIDGE_COMMAND": expected_bridge_command,
+            "LOCAL_AI_DICTATION_GUI_E2E": "1",
+            "LOCAL_AI_DICTATION_GUI_E2E_PORT": str(automation_port),
+            "LOCAL_AI_DICTATION_BRIDGE_URL": expected_bridge_url,
+            "LOCAL_AI_DICTATION_BRIDGE_COMMAND": expected_bridge_command,
         },
     )
     initial_state: dict[str, Any] | None = None
@@ -1736,7 +1750,7 @@ def run_gui_package_hotkey_command(namespace: Any) -> int:
     bridge_port = int(getattr(namespace, "bridge_port", 0)) or reserve_socket_localhost_port()
     expected_bridge_url = bridge_url(host, bridge_port)
     expected_bridge_command = bridge_start_command(host, bridge_port)
-    expected_hotkey = os.environ.get("PARAKEET_HOTKEY", "CommandOrControl+Alt+R")
+    expected_hotkey = os.environ.get("LOCAL_AI_DICTATION_HOTKEY", "CommandOrControl+Alt+R")
     expected_transcript = "hotkey deterministic transcript"
     bridge_stdout_path = smoke_paths["smoke_dir"] / "bridge.stdout.log"
     bridge_stderr_path = smoke_paths["smoke_dir"] / "bridge.stderr.log"
@@ -1762,7 +1776,7 @@ def run_gui_package_hotkey_command(namespace: Any) -> int:
         [
             sys.executable,
             "-m",
-            "parakeet.cli",
+            "local_ai_dictation.cli",
             "bridge",
             "--host",
             host,
@@ -1772,10 +1786,10 @@ def run_gui_package_hotkey_command(namespace: Any) -> int:
         cwd=repo_root(),
         env={
             **os.environ,
-            "PARAKEET_E2E_MODE": "1",
-            "PARAKEET_E2E_TRANSCRIPT": expected_transcript,
-            "PARAKEET_E2E_START_DELAY_MS": "30",
-            "PARAKEET_E2E_STOP_DELAY_MS": "40",
+            "LOCAL_AI_DICTATION_E2E_MODE": "1",
+            "LOCAL_AI_DICTATION_E2E_TRANSCRIPT": expected_transcript,
+            "LOCAL_AI_DICTATION_E2E_START_DELAY_MS": "30",
+            "LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS": "40",
         },
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1785,17 +1799,17 @@ def run_gui_package_hotkey_command(namespace: Any) -> int:
         exit_code = bridge_process.poll()
         _stop_process(bridge_process)
         raise DesktopAppError(
-            f"Parakeet bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
+            f"Local AI Dictation bridge did not become ready at {expected_bridge_url} within 10 seconds (exit code {exit_code})."
         )
 
     launcher_process = launch_wsl_windows_executable(
         installed_paths["launcher_path"],
         env={
-            "PARAKEET_GUI_E2E": "1",
-            "PARAKEET_GUI_E2E_PORT": str(automation_port),
-            "PARAKEET_BRIDGE_URL": expected_bridge_url,
-            "PARAKEET_BRIDGE_COMMAND": expected_bridge_command,
-            "PARAKEET_HOTKEY": expected_hotkey,
+            "LOCAL_AI_DICTATION_GUI_E2E": "1",
+            "LOCAL_AI_DICTATION_GUI_E2E_PORT": str(automation_port),
+            "LOCAL_AI_DICTATION_BRIDGE_URL": expected_bridge_url,
+            "LOCAL_AI_DICTATION_BRIDGE_COMMAND": expected_bridge_command,
+            "LOCAL_AI_DICTATION_HOTKEY": expected_hotkey,
         },
     )
     initial_state: dict[str, Any] | None = None
@@ -1995,8 +2009,8 @@ def run_gui_package_smoke_command(namespace: Any) -> int:
     launcher_process = launch_wsl_windows_executable(
         installed_paths["launcher_path"],
         env={
-            "PARAKEET_GUI_E2E": "1",
-            "PARAKEET_GUI_AUTO_EXIT_MS": str(auto_exit_ms),
+            "LOCAL_AI_DICTATION_GUI_E2E": "1",
+            "LOCAL_AI_DICTATION_GUI_AUTO_EXIT_MS": str(auto_exit_ms),
         },
     )
     try:

@@ -3,15 +3,16 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "parakeet-dictation"
+name = "local-ai-dictation"
 version = "0.1.0"
-description = "Packaged Parakeet dictation app for Linux and optional WSL workflows"
+description = "Local AI Dictation for Linux and optional WSL workflows"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-authors = [{ name = "Parakeet Dictation" }]
+authors = [{ name = "Local AI Dictation" }]
 dependencies = [
   "nemo_toolkit[asr]",
+  "faster-whisper",
   "numpy<2.0",
   "pyaudio",
   "pyperclip",
@@ -21,7 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
-parakeet = "parakeet.cli:main"
+local-ai-dictation = "local_ai_dictation.cli:main"
 
 [project.optional-dependencies]
 test = [

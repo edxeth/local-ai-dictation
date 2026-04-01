@@ -28,9 +28,12 @@ type SessionPayload = {
   stderr_tail: string[];
 };
 
+type BackendName = "whisper" | "parakeet";
+
 type BridgeViewState = {
   bridgeUrl: string;
   bridgeStartCommand: string;
+  preferredBackend: BackendName;
   hotkey: string;
   hotkeyRegistered: boolean;
   connected: boolean;
@@ -124,6 +127,7 @@ type DesktopRPC = {
       startRecording: { params: {}; response: BridgeViewState };
       stopRecording: { params: {}; response: BridgeViewState };
       toggleRecording: { params: {}; response: BridgeViewState };
+      toggleBackend: { params: {}; response: BridgeViewState };
       clearHistory: { params: {}; response: BridgeViewState };
       showWindow: { params: {}; response: { success: true } };
       minimizeWindow: { params: {}; response: { success: true } };
@@ -142,7 +146,10 @@ type DesktopRPC = {
   }>;
 };
 
-const BRIDGE_URL = Bun.env.PARAKEET_BRIDGE_URL || "http://127.0.0.1:8765";
+const DEFAULT_BRIDGE_URL = "http://127.0.0.1:8765";
+const DEFAULT_BACKEND: BackendName = "whisper";
+const BRIDGE_URL = Bun.env.LOCAL_AI_DICTATION_BRIDGE_URL || DEFAULT_BRIDGE_URL;
+const BRIDGE_COMMAND_OVERRIDE = Bun.env.LOCAL_AI_DICTATION_BRIDGE_COMMAND || "";
 const IS_LINUX_WAYLAND = process.platform === "linux"
   && ((Bun.env.XDG_SESSION_TYPE || "").toLowerCase() === "wayland" || Boolean(Bun.env.WAYLAND_DISPLAY));
 const DEFAULT_HOTKEY = process.platform === "linux" ? "Control+Alt+R" : "CommandOrControl+Alt+R";
@@ -165,23 +172,27 @@ function normalizeHotkey(accelerator: string): string {
     .join("+");
 }
 
-const HOTKEY = normalizeHotkey(Bun.env.PARAKEET_HOTKEY || DEFAULT_HOTKEY);
-const BRIDGE_START_COMMAND = Bun.env.PARAKEET_BRIDGE_COMMAND || "parakeet bridge --host 127.0.0.1 --port 8765";
-const GUI_E2E_ENABLED = Bun.env.PARAKEET_GUI_E2E === "1";
-const GUI_E2E_PORT = Number(Bun.env.PARAKEET_GUI_E2E_PORT || "0") || 0;
+const HOTKEY = normalizeHotkey(Bun.env.LOCAL_AI_DICTATION_HOTKEY || DEFAULT_HOTKEY);
+const GUI_E2E_ENABLED = Bun.env.LOCAL_AI_DICTATION_GUI_E2E === "1";
+const GUI_E2E_PORT = Number(Bun.env.LOCAL_AI_DICTATION_GUI_E2E_PORT || "0") || 0;
 const DEFAULT_STARTUP_LOG_DIR = Bun.env.LOCALAPPDATA
-  ? join(Bun.env.LOCALAPPDATA, "parakeet.desktop.local", "stable", "logs")
+  ? join(Bun.env.LOCALAPPDATA, "local-ai-dictation.desktop.local", "stable", "logs")
   : Bun.env.XDG_STATE_HOME
-    ? join(Bun.env.XDG_STATE_HOME, "parakeet", "desktop")
+    ? join(Bun.env.XDG_STATE_HOME, "local-ai-dictation", "desktop")
     : Bun.env.HOME
-      ? join(Bun.env.HOME, ".local", "state", "parakeet", "desktop")
+      ? join(Bun.env.HOME, ".local", "state", "local-ai-dictation", "desktop")
       : "";
-const GUI_LOG_PATH = Bun.env.PARAKEET_GUI_LOG_PATH || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup.log") : "");
-const GUI_STARTUP_DIAGNOSTICS_PATH = Bun.env.PARAKEET_GUI_STARTUP_DIAGNOSTICS_PATH
+const GUI_LOG_PATH = Bun.env.LOCAL_AI_DICTATION_GUI_LOG_PATH || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup.log") : "");
+const GUI_STARTUP_DIAGNOSTICS_PATH = Bun.env.LOCAL_AI_DICTATION_GUI_STARTUP_DIAGNOSTICS_PATH
   || (DEFAULT_STARTUP_LOG_DIR ? join(DEFAULT_STARTUP_LOG_DIR, "startup-diagnostics.json") : "");
-const GUI_AUTO_EXIT_MS = Number(Bun.env.PARAKEET_GUI_AUTO_EXIT_MS || "0") || 0;
+const GUI_AUTO_EXIT_MS = Number(Bun.env.LOCAL_AI_DICTATION_GUI_AUTO_EXIT_MS || "0") || 0;
 const APP_STARTED_AT = Date.now() / 1000;
-const APP_ICON_URL = "views://mainview/assets/parakeet-icon.png";
+const APP_ICON_URL = "views://mainview/assets/local-ai-dictation-icon.png";
+const BACKEND_STATE_PATH = Bun.env.XDG_STATE_HOME
+  ? join(Bun.env.XDG_STATE_HOME, "local-ai-dictation", "backend.json")
+  : Bun.env.HOME
+    ? join(Bun.env.HOME, ".local", "state", "local-ai-dictation", "backend.json")
+    : "/tmp/local-ai-dictation-backend.json";
 const APP_WINDOW_ICON_PATH = join(import.meta.dir, "..", "..", "app.ico");
 
 const SND_ASYNC = 0x0001;
@@ -201,6 +212,73 @@ const nativeCuePlayerCommands = [
   [Bun.which("pw-play"), []],
   [Bun.which("ffplay"), ["-v", "quiet", "-nodisp", "-autoexit"]],
 ] as const;
+
+function normalizeBackend(value: string | null | undefined): BackendName {
+  return value === "parakeet" ? "parakeet" : "whisper";
+}
+
+function readPreferredBackend(): BackendName {
+  try {
+    const payload = JSON.parse(Bun.file(BACKEND_STATE_PATH).textSync());
+    return normalizeBackend(typeof payload?.backend === "string" ? payload.backend : undefined);
+  } catch {
+    return DEFAULT_BACKEND;
+  }
+}
+
+function writePreferredBackend(backend: BackendName): BackendName {
+  mkdirSync(dirname(BACKEND_STATE_PATH), { recursive: true });
+  writeFileSync(BACKEND_STATE_PATH, `${JSON.stringify({ backend })}\n`);
+  return backend;
+}
+
+function togglePreferredBackend(): BackendName {
+  return writePreferredBackend(readPreferredBackend() === "whisper" ? "parakeet" : "whisper");
+}
+
+function localCliPath(): string {
+  const home = Bun.env.HOME;
+  if (home) {
+    const preferred = join(home, ".local", "bin", "local-ai-dictation");
+    if (existsSync(preferred)) {
+      return preferred;
+    }
+  }
+  return Bun.which("local-ai-dictation") || "local-ai-dictation";
+}
+
+function toggleBackendAndRestartBridge(): BackendName {
+  const cli = localCliPath();
+  appendGuiLog("INFO", `Switching backend via ${cli}`);
+  const result = Bun.spawnSync({
+    cmd: [cli, "backend", "toggle", "--restart-bridge"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      PATH: `${Bun.env.HOME ? `${join(Bun.env.HOME, ".local", "bin")}:` : ""}${process.env.PATH || ""}`,
+    },
+  });
+  if (result.exitCode !== 0) {
+    const error = Buffer.from(result.stderr).toString("utf8").trim() || `backend toggle failed with exit code ${result.exitCode}`;
+    throw new Error(error);
+  }
+  const text = Buffer.from(result.stdout).toString("utf8").trim();
+  return normalizeBackend(text || readPreferredBackend());
+}
+
+function buildBridgeStartCommand(backend: BackendName): string {
+  let host = "127.0.0.1";
+  let port = "8765";
+  try {
+    const parsed = new URL(BRIDGE_URL);
+    host = parsed.hostname || host;
+    port = parsed.port || port;
+  } catch {
+    // keep defaults
+  }
+  return `local-ai-dictation bridge --host ${host} --port ${port}${backend === "whisper" ? " --backend whisper" : " --backend parakeet"}`;
+}
 
 function resolveSessionCueAssetPath(kind: SessionCueKind): string | null {
   const filename = kind === "start" ? "session-start.wav" : "session-complete.wav";
@@ -314,11 +392,14 @@ async function fetchBridgeJson(path: string, init?: RequestInit): Promise<any> {
 }
 
 async function readBridgeState(): Promise<BridgeViewState> {
+  const preferredBackend = readPreferredBackend();
+  const bridgeStartCommand = BRIDGE_COMMAND_OVERRIDE || buildBridgeStartCommand(preferredBackend);
   try {
     const health = await fetchBridgeJson("/health");
     return {
       bridgeUrl: BRIDGE_URL,
-      bridgeStartCommand: BRIDGE_START_COMMAND,
+      bridgeStartCommand,
+      preferredBackend,
       hotkey: HOTKEY,
       hotkeyRegistered: startupDiagnostics.hotkeyRegistered,
       connected: true,
@@ -327,7 +408,8 @@ async function readBridgeState(): Promise<BridgeViewState> {
   } catch (error) {
     return {
       bridgeUrl: BRIDGE_URL,
-      bridgeStartCommand: BRIDGE_START_COMMAND,
+      bridgeStartCommand,
+      preferredBackend,
       hotkey: HOTKEY,
       hotkeyRegistered: startupDiagnostics.hotkeyRegistered,
       connected: false,
@@ -390,18 +472,16 @@ function playNativeSessionCue(kind: SessionCueKind): boolean {
 }
 
 async function requestRendererSessionCue(kind: "start" | "complete") {
-  if (playNativeSessionCue(kind)) {
-    return;
-  }
-  if (!startupDiagnostics.rendererRpcReady || !mainWindow?.webview.rpc) {
-    return;
+  if (startupDiagnostics.rendererRpcReady && mainWindow?.webview.rpc) {
+    try {
+      await mainWindow.webview.rpc.request.playSessionCue({ kind });
+      return;
+    } catch (error) {
+      appendGuiLog("WARN", `Failed to play ${kind} cue in renderer: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
-  try {
-    await mainWindow.webview.rpc.request.playSessionCue({ kind });
-  } catch (error) {
-    appendGuiLog("WARN", `Failed to play ${kind} cue in renderer: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  playNativeSessionCue(kind);
 }
 
 function applyObservedBridgeState(state: BridgeViewState, { allowCue = true }: { allowCue?: boolean } = {}) {
@@ -576,7 +656,7 @@ process.on("unhandledRejection", (reason) => {
 writeStartupDiagnostics();
 appendGuiLog("INFO", "Creating BrowserWindow...");
 mainWindow = new BrowserWindow({
-  title: "Parakeet Dictation GUI",
+  title: "Local AI Dictation",
   url: "views://mainview/index.html",
   titleBarStyle: "default",
   transparent: false,
@@ -604,6 +684,10 @@ mainWindow = new BrowserWindow({
         toggleRecording: async () => {
           await fetchBridgeJson("/session/toggle", { method: "POST", body: "{}" });
           return await refreshBridgeStateCache();
+        },
+        toggleBackend: async () => {
+          toggleBackendAndRestartBridge();
+          return await refreshBridgeStateCache({ allowCue: false });
         },
         clearHistory: async () => {
           await fetchBridgeJson("/session/clear-history", { method: "POST", body: "{}" });
@@ -819,7 +903,7 @@ function startAutomationServer() {
 ensureMainWindowSize();
 
 tray = new Tray({
-  title: "Parakeet",
+  title: "Local AI Dictation",
   image: APP_ICON_URL,
   width: 18,
   height: 18,
@@ -832,7 +916,7 @@ mainWindow.on("close", () => {
 });
 
 tray.setMenu([
-  { type: "normal", label: "Open Parakeet", action: "open" },
+  { type: "normal", label: "Open Local AI Dictation", action: "open" },
   { type: "normal", label: `Toggle Recording (${HOTKEY})`, action: "toggle" },
   { type: "divider" },
   { type: "normal", label: "Quit", action: "quit" },
@@ -870,6 +954,6 @@ if (IS_LINUX_WAYLAND) {
 startBridgePolling();
 startAutomationServer();
 
-appendGuiLog("INFO", "Parakeet desktop app started");
+appendGuiLog("INFO", "Local AI Dictation desktop app started");
 appendGuiLog("INFO", `Bridge URL: ${BRIDGE_URL}`);
 appendGuiLog("INFO", `Hotkey: ${HOTKEY}`);

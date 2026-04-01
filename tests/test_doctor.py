@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 
-from parakeet.cli import main
-from parakeet.doctor import collect_doctor_report, doctor_exit_code
-from parakeet.model import MODEL_ID
-from parakeet.types import AudioDevice
+from local_ai_dictation.cli import main
+from local_ai_dictation.doctor import collect_doctor_report, doctor_exit_code
+from local_ai_dictation.model import MODEL_ID
+from local_ai_dictation.types import AudioDevice
 
 
 _DEFAULT_WSL = {
@@ -16,17 +16,17 @@ _DEFAULT_WSL = {
 
 
 def _stub_common(monkeypatch):
-    monkeypatch.setattr("parakeet.doctor._detect_wsl", lambda: dict(_DEFAULT_WSL))
+    monkeypatch.setattr("local_ai_dictation.doctor._detect_wsl", lambda: dict(_DEFAULT_WSL))
 
 
 def _stub_ready_runtime(monkeypatch):
     _stub_common(monkeypatch)
     monkeypatch.setattr(
-        "parakeet.doctor.probe_audio_backend",
+        "local_ai_dictation.doctor.probe_audio_backend",
         lambda: {"status": "reachable", "transport": "tcp", "detail": "pactl info succeeded"},
     )
     monkeypatch.setattr(
-        "parakeet.doctor.list_input_devices",
+        "local_ai_dictation.doctor.list_input_devices",
         lambda: [
             AudioDevice(
                 id=2,
@@ -39,11 +39,11 @@ def _stub_ready_runtime(monkeypatch):
         ],
     )
     monkeypatch.setattr(
-        "parakeet.doctor._collect_clipboard_status",
+        "local_ai_dictation.doctor._collect_clipboard_status",
         lambda: {"status": "ok", "backend": "pyperclip"},
     )
     monkeypatch.setattr(
-        "parakeet.doctor._collect_cuda_status",
+        "local_ai_dictation.doctor._collect_cuda_status",
         lambda: {"available": True, "selected_device": "cuda", "device_name": "NVIDIA Test GPU"},
     )
 
@@ -73,7 +73,7 @@ def test_collect_doctor_report_skips_model_check_by_default(monkeypatch):
     def _unexpected_model_check():
         raise AssertionError("default doctor mode should not check the model cache")
 
-    monkeypatch.setattr("parakeet.doctor.check_model_cache", _unexpected_model_check)
+    monkeypatch.setattr("local_ai_dictation.doctor.check_model_cache", _unexpected_model_check)
 
     report = collect_doctor_report()
 
@@ -89,20 +89,20 @@ def test_collect_doctor_report_skips_model_check_by_default(monkeypatch):
 def test_collect_doctor_report_fails_when_pulse_is_unreachable_and_no_devices_exist(monkeypatch):
     _stub_common(monkeypatch)
     monkeypatch.setattr(
-        "parakeet.doctor.probe_audio_backend",
+        "local_ai_dictation.doctor.probe_audio_backend",
         lambda: {
             "status": "unreachable",
             "transport": "unix",
             "detail": "Connection refused",
         },
     )
-    monkeypatch.setattr("parakeet.doctor.list_input_devices", lambda: [])
+    monkeypatch.setattr("local_ai_dictation.doctor.list_input_devices", lambda: [])
     monkeypatch.setattr(
-        "parakeet.doctor._collect_clipboard_status",
+        "local_ai_dictation.doctor._collect_clipboard_status",
         lambda: {"status": "ok", "backend": "pyperclip"},
     )
     monkeypatch.setattr(
-        "parakeet.doctor._collect_cuda_status",
+        "local_ai_dictation.doctor._collect_cuda_status",
         lambda: {"available": True, "selected_device": "cuda", "device_name": "NVIDIA Test GPU"},
     )
 
@@ -119,11 +119,11 @@ def test_collect_doctor_report_fails_when_pulse_is_unreachable_and_no_devices_ex
 def test_collect_doctor_report_warns_for_clipboard_and_cuda_without_blocking_recording(monkeypatch):
     _stub_common(monkeypatch)
     monkeypatch.setattr(
-        "parakeet.doctor.probe_audio_backend",
+        "local_ai_dictation.doctor.probe_audio_backend",
         lambda: {"status": "reachable", "transport": "tcp", "detail": "pactl info succeeded"},
     )
     monkeypatch.setattr(
-        "parakeet.doctor.list_input_devices",
+        "local_ai_dictation.doctor.list_input_devices",
         lambda: [
             AudioDevice(
                 id=7,
@@ -135,11 +135,11 @@ def test_collect_doctor_report_warns_for_clipboard_and_cuda_without_blocking_rec
         ],
     )
     monkeypatch.setattr(
-        "parakeet.doctor._collect_clipboard_status",
+        "local_ai_dictation.doctor._collect_clipboard_status",
         lambda: {"status": "unavailable", "backend": "pyperclip"},
     )
     monkeypatch.setattr(
-        "parakeet.doctor._collect_cuda_status",
+        "local_ai_dictation.doctor._collect_cuda_status",
         lambda: {
             "available": False,
             "selected_device": "cpu",
@@ -161,7 +161,7 @@ def test_collect_doctor_report_warns_for_clipboard_and_cuda_without_blocking_rec
 def test_collect_doctor_report_check_model_cache_ok(monkeypatch):
     _stub_ready_runtime(monkeypatch)
     monkeypatch.setattr(
-        "parakeet.doctor.check_model_cache",
+        "local_ai_dictation.doctor.check_model_cache",
         lambda: {
             "checked": True,
             "cache_present": True,
@@ -193,7 +193,7 @@ def test_collect_doctor_report_check_model_cache_ok(monkeypatch):
 def test_collect_doctor_report_check_model_cache_surfaces_missing_cache_and_import_failures(monkeypatch):
     _stub_ready_runtime(monkeypatch)
     monkeypatch.setattr(
-        "parakeet.doctor.check_model_cache",
+        "local_ai_dictation.doctor.check_model_cache",
         lambda: {
             "checked": True,
             "cache_present": False,
@@ -253,7 +253,7 @@ def test_doctor_command_emits_json_schema(monkeypatch, capsys):
 def test_doctor_command_emits_model_check_json(monkeypatch, capsys):
     _stub_ready_runtime(monkeypatch)
     monkeypatch.setattr(
-        "parakeet.doctor.check_model_cache",
+        "local_ai_dictation.doctor.check_model_cache",
         lambda: {
             "checked": True,
             "cache_present": True,

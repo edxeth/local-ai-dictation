@@ -12,9 +12,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 
-audio_module = importlib.import_module("parakeet.audio")
-dictation_module = importlib.import_module("parakeet.dictation")
-DictationConfig = importlib.import_module("parakeet.types").DictationConfig
+audio_module = importlib.import_module("local_ai_dictation.audio")
+dictation_module = importlib.import_module("local_ai_dictation.dictation")
+DictationConfig = importlib.import_module("local_ai_dictation.types").DictationConfig
 
 VAD_FRAME_BYTES = audio_module.VAD_FRAME_BYTES
 VAD_FRAME_SAMPLES = audio_module.VAD_FRAME_SAMPLES
@@ -230,14 +230,14 @@ def test_dictation_recording_uses_vad_backend_when_enabled(monkeypatch):
     backend = object()
     calls: dict[str, object] = {}
 
-    monkeypatch.setattr("parakeet.dictation.build_vad_backend", lambda mode: backend)
+    monkeypatch.setattr("local_ai_dictation.dictation.build_vad_backend", lambda mode: backend)
 
     def _fake_record_until_vad_stop(stream_arg, **kwargs):
         calls["stream"] = stream_arg
         calls.update(kwargs)
         return b"vad-audio"
 
-    monkeypatch.setattr("parakeet.dictation.record_until_vad_stop", _fake_record_until_vad_stop)
+    monkeypatch.setattr("local_ai_dictation.dictation.record_until_vad_stop", _fake_record_until_vad_stop)
 
     audio_data = dictation_module.record_audio_interruptible(config, pyaudio_module)
 
@@ -260,7 +260,7 @@ def test_dictation_recording_falls_back_to_explicit_pulse_device_when_default_de
     pyaudio_module = _FallbackPyAudioModule(stream)
     config = DictationConfig(clipboard=False)
 
-    monkeypatch.setattr("parakeet.dictation.shutil.which", lambda name: None)
+    monkeypatch.setattr("local_ai_dictation.dictation.shutil.which", lambda name: None)
 
     audio_data = dictation_module.record_audio_interruptible(
         config,
@@ -305,7 +305,7 @@ def test_dictation_recording_prefers_pipewire_device_on_linux_when_input_device_
     pyaudio_module = _PipeWirePreferredPyAudioModule(stream)
     config = DictationConfig(clipboard=False)
 
-    monkeypatch.setattr("parakeet.dictation.shutil.which", lambda name: None)
+    monkeypatch.setattr("local_ai_dictation.dictation.shutil.which", lambda name: None)
 
     audio_data = dictation_module.record_audio_interruptible(
         config,
@@ -325,7 +325,7 @@ def test_resolve_input_sample_rate_prefers_pipewire_default_rate_on_linux(monkey
     stream = _FakeStream([b"\x00\x00" * 1024])
     pyaudio_module = _PipeWirePreferredPyAudioModule(stream)
 
-    monkeypatch.setattr("parakeet.audio.pulse_default_source_spec", lambda: None)
+    monkeypatch.setattr("local_ai_dictation.audio.pulse_default_source_spec", lambda: None)
     sample_rate = audio_module.resolve_input_sample_rate(None, pyaudio_module)
 
     assert sample_rate == 44100
@@ -338,8 +338,8 @@ def test_dictation_recording_prefers_parec_capture_when_available(monkeypatch):
     pyaudio_module = _PipeWirePreferredPyAudioModule(stream)
     config = DictationConfig(clipboard=False)
 
-    monkeypatch.setattr("parakeet.dictation.shutil.which", lambda name: "/usr/bin/parec" if name == "parec" else None)
-    monkeypatch.setattr("parakeet.dictation._record_audio_with_parec", lambda sample_rate, *, stop_requested, status_stream=None: b"parec-audio")
+    monkeypatch.setattr("local_ai_dictation.dictation.shutil.which", lambda name: "/usr/bin/parec" if name == "parec" else None)
+    monkeypatch.setattr("local_ai_dictation.dictation._record_audio_with_parec", lambda sample_rate, *, stop_requested, status_stream=None: b"parec-audio")
 
     audio_data = dictation_module.record_audio_interruptible(
         config,

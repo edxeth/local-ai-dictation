@@ -1,4 +1,4 @@
-"""Model readiness and transcription helpers for Parakeet."""
+"""Model readiness and transcription helpers for Local AI Dictation."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-from parakeet.errors import MODEL_IMPORT_FAILED, MODEL_TRANSCRIBE_FAILED, ModelError
-from parakeet.types import DictationConfig, TranscriptionEngine, TranscriptionResult
+from local_ai_dictation.errors import MODEL_IMPORT_FAILED, MODEL_TRANSCRIBE_FAILED, ModelError
+from local_ai_dictation.types import DictationConfig, TranscriptionEngine, TranscriptionResult
 
 
 MODEL_ID = "nvidia/parakeet-tdt-0.6b-v3"
@@ -32,7 +32,7 @@ def _candidate_cache_roots(
     *,
     home: Path | None = None,
 ) -> list[Path]:
-    source = os.environ if env is None else env
+    source = {} if env is None and home is not None else (os.environ if env is None else env)
     home_dir = Path.home() if home is None else home
     roots: list[Path] = []
 
@@ -104,7 +104,7 @@ def check_model_cache(
     if cache_present and import_ready:
         detail = "Local cache and model imports look ready"
     elif not cache_present and import_ready:
-        detail = "Local Parakeet cache snapshot is missing"
+        detail = "Local model cache snapshot is missing"
     elif cache_present and not import_ready:
         detail = "Local cache exists, but model imports failed"
     else:

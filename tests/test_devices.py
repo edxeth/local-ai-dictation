@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 
-from parakeet.audio import list_input_devices
-from parakeet.cli import main
-from parakeet.types import AudioDevice
+from local_ai_dictation.audio import list_input_devices
+from local_ai_dictation.cli import main
+from local_ai_dictation.types import AudioDevice
 
 
 class _FakePyAudioInstance:
@@ -81,7 +81,7 @@ def test_list_input_devices_filters_and_sorts_by_device_id():
 
 def test_devices_command_emits_stable_json_schema(monkeypatch, capsys):
     monkeypatch.setattr(
-        "parakeet.cli.list_input_devices",
+        "local_ai_dictation.cli.list_input_devices",
         lambda: [
             AudioDevice(
                 id=2,
@@ -114,7 +114,7 @@ def test_devices_command_emits_stable_json_schema(monkeypatch, capsys):
 
 
 def test_devices_command_reports_empty_array_when_no_devices(monkeypatch, capsys):
-    monkeypatch.setattr("parakeet.cli.list_input_devices", lambda: [])
+    monkeypatch.setattr("local_ai_dictation.cli.list_input_devices", lambda: [])
 
     exit_code = main(["devices", "--json"])
     payload = json.loads(capsys.readouterr().out)

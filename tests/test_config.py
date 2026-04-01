@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from parakeet.config import resolve_config
-from parakeet.dictation import build_parser
+from local_ai_dictation.config import resolve_config
+from local_ai_dictation.dictation import build_parser
 
 
 def _parse(argv: list[str]):
@@ -11,6 +11,7 @@ def _parse(argv: list[str]):
 def test_defaults_apply_when_no_overrides(tmp_path):
     config = resolve_config(_parse([]), env={}, config_path=tmp_path / "missing.toml")
 
+    assert config.backend == "whisper"
     assert config.cpu is False
     assert config.input_device is None
     assert config.vad is False
@@ -23,11 +24,11 @@ def test_defaults_apply_when_no_overrides(tmp_path):
     assert config.debug is False
 
 
-
 def test_config_file_overrides_defaults(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         """
+        backend = "whisper"
         cpu = true
         input_device = "USB Mic"
         vad = true
@@ -45,6 +46,7 @@ def test_config_file_overrides_defaults(tmp_path):
 
     config = resolve_config(_parse([]), env={}, config_path=config_path)
 
+    assert config.backend == "whisper"
     assert config.cpu is True
     assert config.input_device == "USB Mic"
     assert config.vad is True
@@ -57,11 +59,11 @@ def test_config_file_overrides_defaults(tmp_path):
     assert config.debug is True
 
 
-
 def test_environment_overrides_config_file(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         """
+        backend = "whisper"
         cpu = false
         input_device = "USB Mic"
         vad = false
@@ -77,20 +79,22 @@ def test_environment_overrides_config_file(tmp_path):
         encoding="utf-8",
     )
     env = {
-        "PARAKEET_CPU": "1",
-        "PARAKEET_INPUT_DEVICE": "9",
-        "PARAKEET_VAD": "true",
-        "PARAKEET_MAX_SILENCE_MS": "900",
-        "PARAKEET_MIN_SPEECH_MS": "700",
-        "PARAKEET_VAD_MODE": "3",
-        "PARAKEET_FORMAT": "json",
-        "PARAKEET_OUTPUT_FILE": "from-env.json",
-        "PARAKEET_CLIPBOARD": "0",
-        "PARAKEET_DEBUG": "yes",
+        "LOCAL_AI_DICTATION_BACKEND": "whisper",
+        "LOCAL_AI_DICTATION_CPU": "1",
+        "LOCAL_AI_DICTATION_INPUT_DEVICE": "9",
+        "LOCAL_AI_DICTATION_VAD": "true",
+        "LOCAL_AI_DICTATION_MAX_SILENCE_MS": "900",
+        "LOCAL_AI_DICTATION_MIN_SPEECH_MS": "700",
+        "LOCAL_AI_DICTATION_VAD_MODE": "3",
+        "LOCAL_AI_DICTATION_FORMAT": "json",
+        "LOCAL_AI_DICTATION_OUTPUT_FILE": "from-env.json",
+        "LOCAL_AI_DICTATION_CLIPBOARD": "0",
+        "LOCAL_AI_DICTATION_DEBUG": "yes",
     }
 
     config = resolve_config(_parse([]), env=env, config_path=config_path)
 
+    assert config.backend == "whisper"
     assert config.cpu is True
     assert config.input_device == 9
     assert config.vad is True
@@ -103,11 +107,11 @@ def test_environment_overrides_config_file(tmp_path):
     assert config.debug is True
 
 
-
 def test_cli_overrides_environment(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         """
+        backend = "whisper"
         cpu = false
         input_device = "USB Mic"
         vad = false
@@ -123,20 +127,23 @@ def test_cli_overrides_environment(tmp_path):
         encoding="utf-8",
     )
     env = {
-        "PARAKEET_CPU": "0",
-        "PARAKEET_INPUT_DEVICE": "9",
-        "PARAKEET_VAD": "false",
-        "PARAKEET_MAX_SILENCE_MS": "900",
-        "PARAKEET_MIN_SPEECH_MS": "700",
-        "PARAKEET_VAD_MODE": "3",
-        "PARAKEET_FORMAT": "text",
-        "PARAKEET_OUTPUT_FILE": "from-env.json",
-        "PARAKEET_CLIPBOARD": "1",
-        "PARAKEET_DEBUG": "false",
+        "LOCAL_AI_DICTATION_BACKEND": "whisper",
+        "LOCAL_AI_DICTATION_CPU": "0",
+        "LOCAL_AI_DICTATION_INPUT_DEVICE": "9",
+        "LOCAL_AI_DICTATION_VAD": "false",
+        "LOCAL_AI_DICTATION_MAX_SILENCE_MS": "900",
+        "LOCAL_AI_DICTATION_MIN_SPEECH_MS": "700",
+        "LOCAL_AI_DICTATION_VAD_MODE": "3",
+        "LOCAL_AI_DICTATION_FORMAT": "text",
+        "LOCAL_AI_DICTATION_OUTPUT_FILE": "from-env.json",
+        "LOCAL_AI_DICTATION_CLIPBOARD": "1",
+        "LOCAL_AI_DICTATION_DEBUG": "false",
     }
 
     args = _parse(
         [
+            "--backend",
+            "whisper",
             "--cpu",
             "--input-device",
             "Studio Mic",
@@ -157,6 +164,7 @@ def test_cli_overrides_environment(tmp_path):
     )
     config = resolve_config(args, env=env, config_path=config_path)
 
+    assert config.backend == "whisper"
     assert config.cpu is True
     assert config.input_device == "Studio Mic"
     assert config.vad is True

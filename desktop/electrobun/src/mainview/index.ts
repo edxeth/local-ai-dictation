@@ -30,9 +30,12 @@ type SessionPayload = {
   stderr_tail: string[];
 };
 
+type BackendName = "whisper" | "parakeet";
+
 type BridgeViewState = {
   bridgeUrl: string;
   bridgeStartCommand: string;
+  preferredBackend: BackendName;
   hotkey: string;
   hotkeyRegistered: boolean;
   connected: boolean;
@@ -66,6 +69,7 @@ type DesktopRPC = {
       startRecording: { params: {}; response: BridgeViewState };
       stopRecording: { params: {}; response: BridgeViewState };
       toggleRecording: { params: {}; response: BridgeViewState };
+      toggleBackend: { params: {}; response: BridgeViewState };
       clearHistory: { params: {}; response: BridgeViewState };
       showWindow: { params: {}; response: { success: true } };
       minimizeWindow: { params: {}; response: { success: true } };
@@ -121,6 +125,8 @@ const minimizeWindowButton = document.getElementById("minimizeWindowButton") as 
 const closeWindowButton = document.getElementById("closeWindowButton") as HTMLButtonElement;
 const statusBadge = document.getElementById("statusBadge") as HTMLDivElement;
 const hotkeyValue = document.getElementById("hotkeyValue") as HTMLDivElement;
+const modelValue = document.getElementById("modelValue") as HTMLDivElement;
+const switchModelButton = document.getElementById("switchModelButton") as HTMLButtonElement;
 const toggleButton = document.getElementById("toggleButton") as HTMLButtonElement;
 const statusLine = document.getElementById("statusLine") as HTMLParagraphElement;
 const bridgeUrl = document.getElementById("bridgeUrl") as HTMLDivElement;
@@ -184,6 +190,10 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderBackendLabel(backend: BackendName): string {
+  return backend === "whisper" ? "Whisper" : "Parakeet";
 }
 
 function renderHistoryActionIcon(copied: boolean): string {
@@ -374,6 +384,7 @@ function buildStateSignature(viewState: BridgeViewState): string {
     connected: viewState.connected,
     bridgeUrl: viewState.bridgeUrl,
     bridgeStartCommand: viewState.bridgeStartCommand,
+    preferredBackend: viewState.preferredBackend,
     hotkey: viewState.hotkey,
     hotkeyRegistered: viewState.hotkeyRegistered,
     session: viewState.session,
@@ -446,10 +457,13 @@ function renderState(viewState: BridgeViewState) {
 
   currentState = viewState;
   const sessionState: SessionStatus = viewState.connected ? viewState.session.state : "offline";
+  const runningBackend = String(viewState.session.config.backend || viewState.preferredBackend) as BackendName;
   statusBadge.textContent = viewState.connected ? viewState.session.state : "Disconnected";
   statusBadge.className = `badge ${sessionState}`;
 
   hotkeyValue.innerHTML = renderHotkey(viewState.hotkey);
+  modelValue.textContent = renderBackendLabel(runningBackend);
+  switchModelButton.textContent = runningBackend === "whisper" ? "Use Parakeet" : "Use Whisper";
   bridgeUrl.textContent = viewState.bridgeUrl;
   bridgeCommand.textContent = viewState.bridgeStartCommand;
   renderHistory(nextFilteredHistory);
@@ -460,19 +474,20 @@ function renderState(viewState: BridgeViewState) {
   } else if (viewState.session.state === "starting") {
     setOverlay(true, "Preparing to record…", "Recording is being prepared. Please wait a moment.");
   } else if (viewState.session.state === "transcribing") {
-    setOverlay(true, "Transcribing…", "Audio has been captured. Please wait while Parakeet generates the transcript.");
+    setOverlay(true, "Transcribing…", "Audio has been captured. Please wait while the active model generates the transcript.");
   } else {
     setOverlay(false);
   }
 
   toggleButton.disabled = !viewState.connected || viewState.session.model_loading || viewState.session.state === "transcribing";
+  switchModelButton.disabled = lockedForBusyWork;
   clearHistoryButton.disabled = !nextFilteredHistory.length || lockedForBusyWork;
 
   if (!viewState.connected) {
     toggleButton.textContent = "Bridge offline";
     statusLine.textContent = viewState.hotkeyRegistered
       ? "Start the bridge command below, then use the button or hotkey."
-      : "Start the bridge command below, then use the button. Global hotkey unavailable in this session.";
+      : "Start the bridge command below, then use the button or your configured hotkey.";
   } else if (viewState.session.model_loading) {
     toggleButton.textContent = "Loading model…";
     statusLine.textContent = "Bridge is warming the model. Recording will unlock automatically when ready.";
@@ -490,13 +505,17 @@ function renderState(viewState: BridgeViewState) {
     statusLine.textContent = "Bridge reachable but the backend reported an error.";
   } else {
     toggleButton.textContent = viewState.session.model_loaded ? "Start recording" : "Load + record";
-    statusLine.textContent = viewState.session.model_loaded
-      ? viewState.hotkeyRegistered
-        ? "Model ready. Press the button or the hotkey to begin."
-        : "Model ready. Press the button to begin. Global hotkey unavailable in this session."
-      : viewState.hotkeyRegistered
-        ? "Ready. First recording will load the model; after that it stays warm."
-        : "Ready. First recording will load the model; after that it stays warm. Global hotkey unavailable in this session.";
+    if (runningBackend !== viewState.preferredBackend) {
+      statusLine.textContent = `Bridge is using ${renderBackendLabel(runningBackend)}. Restart the bridge to switch to ${renderBackendLabel(viewState.preferredBackend)}.`;
+    } else {
+      statusLine.textContent = viewState.session.model_loaded
+        ? viewState.hotkeyRegistered
+          ? "Model ready. Press the button or the hotkey to begin."
+          : "Model ready. Press the button or your configured hotkey to begin."
+        : viewState.hotkeyRegistered
+          ? "Ready. First recording will load the model; after that it stays warm."
+          : "Ready. First recording will load the model; after that it stays warm. You can also use your configured hotkey.";
+    }
   }
 
   const errorLines = [];
@@ -533,6 +552,19 @@ async function toggleRecording() {
     const next = current.connected && ["starting", "recording"].includes(current.session.state)
       ? await electrobun.rpc!.request.stopRecording({})
       : await electrobun.rpc!.request.startRecording({});
+    renderState(next);
+    lastRenderedStateSignature = buildStateSignature(next);
+  } catch (error) {
+    errorBox.textContent = error instanceof Error ? error.message : String(error);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function toggleModel() {
+  setBusy(true);
+  try {
+    const next = await electrobun.rpc!.request.toggleBackend({});
     renderState(next);
     lastRenderedStateSignature = buildStateSignature(next);
   } catch (error) {
@@ -588,6 +620,9 @@ closeWindowButton.addEventListener("click", () => {
 toggleButton.addEventListener("click", () => {
   void primeSessionAudio();
   void toggleRecording();
+});
+switchModelButton.addEventListener("click", () => {
+  void toggleModel();
 });
 clearHistoryButton.addEventListener("click", () => {
   void clearHistory();

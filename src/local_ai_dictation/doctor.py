@@ -1,4 +1,4 @@
-"""Diagnostics collection and rendering for the Parakeet CLI."""
+"""Diagnostics collection and rendering for Local AI Dictation."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import platform
 import shutil
 from typing import Any, Mapping, Sequence
 
-from parakeet.audio import list_input_devices, probe_audio_backend
-from parakeet.errors import (
+from local_ai_dictation.audio import list_input_devices, probe_audio_backend
+from local_ai_dictation.errors import (
     AUDIO_BACKEND_UNREACHABLE,
     AUDIO_NO_INPUT_DEVICE,
     CLIPBOARD_UNAVAILABLE,
@@ -20,8 +20,8 @@ from parakeet.errors import (
     MODEL_IMPORT_FAILED,
     ExitCode,
 )
-from parakeet.model import MODEL_ID, check_model_cache
-from parakeet.types import AudioDevice, DoctorIssue, DoctorReport
+from local_ai_dictation.model import MODEL_ID, check_model_cache
+from local_ai_dictation.types import AudioDevice, DoctorIssue, DoctorReport
 
 
 def _read_text(path: Path) -> str:
@@ -207,7 +207,7 @@ def _build_issues(
             DoctorIssue(
                 code=MODEL_IMPORT_FAILED,
                 severity="fail",
-                message=f"Parakeet model imports are not ready: {detail}",
+                message=f"Model imports are not ready: {detail}",
                 remediation="Install the required runtime dependencies and confirm `import nemo.collections.asr` works without loading the model.",
             )
         )
@@ -218,8 +218,8 @@ def _build_issues(
             DoctorIssue(
                 code=MODEL_CACHE_MISSING,
                 severity="fail",
-                message=f"Local Parakeet model cache is missing: {detail}",
-                remediation="Populate the local Hugging Face cache for the Parakeet model before relying on offline readiness checks.",
+                message=f"Local model cache is missing: {detail}",
+                remediation="Populate the local Hugging Face cache for the configured model before relying on offline readiness checks.",
             )
         )
 
@@ -286,7 +286,7 @@ def collect_doctor_report(check_model_cache: bool = False) -> DoctorReport:
 
 def render_doctor_text(report: DoctorReport) -> str:
     lines = [
-        "Parakeet doctor",
+        "Local AI Dictation doctor",
         f"overall: {report.status['overall']}",
         f"platform: {report.platform.get('system', 'unknown')} {report.platform.get('release', '')}".rstrip(),
         f"pulse: {report.pulse.get('status', 'unknown')} ({report.pulse.get('detail', 'no detail')})",

@@ -1,4 +1,4 @@
-"""Opt-in localhost bridge for controlling Parakeet dictation from a desktop app."""
+"""Opt-in localhost bridge for controlling Local AI Dictation from a desktop app."""
 
 from __future__ import annotations
 
@@ -14,24 +14,25 @@ import time
 from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs, urlparse
 
-from parakeet.audio import list_input_devices, resample_pcm16_mono, resolve_input_sample_rate
-from parakeet.dictation import (
+from local_ai_dictation.audio import list_input_devices, resample_pcm16_mono, resolve_input_sample_rate
+from local_ai_dictation.backend_state import get_backend
+from local_ai_dictation.dictation import (
     _load_model,
     _load_runtime_dependencies,
     _transcribe_once,
     record_audio_interruptible,
     save_audio,
 )
-from parakeet.doctor import collect_doctor_report
-from parakeet.errors import ExitCode, ModelError
-from parakeet.output import copy_transcript_to_clipboard, render_transcription
-from parakeet.types import DictationConfig, TranscriptionResult
+from local_ai_dictation.doctor import collect_doctor_report
+from local_ai_dictation.errors import ExitCode, ModelError
+from local_ai_dictation.output import copy_transcript_to_clipboard, render_transcription
+from local_ai_dictation.types import DictationConfig, TranscriptionResult
 
 
 BRIDGE_SCHEMA_VERSION = 1
-DEFAULT_E2E_TRANSCRIPT = "Parakeet deterministic E2E transcript"
-LAST_CAPTURE_RAW_PATH = Path("/tmp/parakeet-last-capture-raw.wav")
-LAST_CAPTURE_MODEL_INPUT_PATH = Path("/tmp/parakeet-last-capture-16k.wav")
+DEFAULT_E2E_TRANSCRIPT = "Local AI Dictation deterministic E2E transcript"
+LAST_CAPTURE_RAW_PATH = Path("/tmp/local-ai-dictation-last-capture-raw.wav")
+LAST_CAPTURE_MODEL_INPUT_PATH = Path("/tmp/local-ai-dictation-last-capture-16k.wav")
 
 
 class BridgeStateError(RuntimeError):
@@ -64,6 +65,7 @@ class DictationBridgeController:
     def __init__(
         self,
         *,
+        backend: str = "whisper",
         cpu: bool = False,
         input_device: int | str | None = None,
         vad: bool = False,
@@ -79,11 +81,12 @@ class DictationBridgeController:
         e2e_transcript: str = DEFAULT_E2E_TRANSCRIPT,
         e2e_start_delay_ms: int = 0,
         e2e_stop_delay_ms: int = 0,
-        runtime_loader: Callable[[bool], tuple[Any, Any, Any, Any]] = _load_runtime_dependencies,
+        runtime_loader: Callable[..., tuple[Any, Any, Any, Any]] = _load_runtime_dependencies,
         model_loader: Callable[..., tuple[Any, bool, float, float]] = _load_model,
         recorder: Callable[..., bytes | None] = record_audio_interruptible,
         transcriber: Callable[..., tuple[TranscriptionResult, str, float, float]] = _transcribe_once,
     ) -> None:
+        self.backend = backend
         self.cpu = cpu
         self.input_device = input_device
         self.vad = vad
@@ -120,7 +123,7 @@ class DictationBridgeController:
         self._stderr_tail: list[str] = []
         self._history: list[dict[str, Any]] = []
 
-        self._nemo_asr: Any | None = None
+        self._runtime_module: Any | None = None
         self._pyaudio_module: Any | None = None
         self._pyperclip_module: Any | None = None
         self._torch_module: Any | None = None
@@ -153,6 +156,7 @@ class DictationBridgeController:
 
     def _config(self) -> DictationConfig:
         return DictationConfig(
+            backend=self.backend,
             cpu=self.cpu,
             input_device=self.input_device,
             vad=self.vad,
@@ -171,8 +175,11 @@ class DictationBridgeController:
         if self._e2e_mode or self._runtime_ready.is_set():
             return
         self._append_diagnostic("Starting...")
-        nemo_asr, pyaudio_module, pyperclip_module, torch_module = self._runtime_loader(self.debug)
-        self._nemo_asr = nemo_asr
+        try:
+            runtime_module, pyaudio_module, pyperclip_module, torch_module = self._runtime_loader(self.backend, self.debug)
+        except TypeError:
+            runtime_module, pyaudio_module, pyperclip_module, torch_module = self._runtime_loader(self.debug)
+        self._runtime_module = runtime_module
         self._pyaudio_module = pyaudio_module
         self._pyperclip_module = pyperclip_module
         self._torch_module = torch_module
@@ -181,11 +188,11 @@ class DictationBridgeController:
     def _ensure_model_loaded(self, config: DictationConfig) -> None:
         if self._e2e_mode or self._model_loaded:
             return
-        if self._nemo_asr is None or self._torch_module is None:
+        if self._runtime_module is None or self._torch_module is None:
             raise RuntimeError("Bridge runtime dependencies are not loaded")
         model, _use_cuda, _load_start, _load_end = self._model_loader(
             config,
-            self._nemo_asr,
+            self._runtime_module,
             self._torch_module,
             status_stream=self._diagnostic_stream,
         )
@@ -193,16 +200,35 @@ class DictationBridgeController:
         self._model_loaded = True
 
     def _warmup_worker(self) -> None:
+        warmup_temp_path: str | None = None
         try:
             config = self._config()
             self._ensure_runtime_loaded()
             if self._shutdown_requested.is_set():
                 return
             self._ensure_model_loaded(config)
+            if self._shutdown_requested.is_set() or self._model is None:
+                return
+            if self.backend == "parakeet":
+                self._append_diagnostic("Warming model")
+                silence = b"\x00\x00" * (16000 // 2)
+                _warmup_result, warmup_temp_path, _warmup_start, _warmup_end = self._transcriber(
+                    config,
+                    self._model,
+                    silence,
+                    16000,
+                    status_stream=self._diagnostic_stream,
+                )
         except Exception as exc:  # pragma: no cover - defensive warmup guard
             with self._lock:
                 self._last_error = str(exc)
         finally:
+            if warmup_temp_path:
+                try:
+                    import os
+                    os.unlink(warmup_temp_path)
+                except Exception:
+                    pass
             with self._lock:
                 self._model_loading = False
 
@@ -462,7 +488,8 @@ class DictationBridgeController:
                 "schema_version": BRIDGE_SCHEMA_VERSION,
                 "ok": True,
                 "bridge": {
-                    "backend": "parakeet-dictation-bridge",
+                    "backend": "local-ai-dictation-bridge",
+                    "model_backend": self.backend,
                     "model_loaded": self._model_loaded,
                     "model_loading": self._model_loading,
                     "e2e_mode": self._e2e_mode,
@@ -485,6 +512,7 @@ class DictationBridgeController:
                 "model_loading": self._model_loading,
                 "history": list(self._history),
                 "config": {
+                    "backend": self.backend,
                     "cpu": self.cpu,
                     "input_device": self.input_device,
                     "vad": self.vad,
@@ -604,7 +632,7 @@ def make_bridge_server(
     *,
     controller: DictationBridgeController,
 ) -> ThreadingHTTPServer:
-    handler = type("ParakeetBridgeHandler", (_BridgeHandler,), {"controller": controller})
+    handler = type("LocalAIDictationBridgeHandler", (_BridgeHandler,), {"controller": controller})
     return ThreadingHTTPServer((host, port), handler)
 
 
@@ -614,7 +642,9 @@ def build_bridge_controller_from_namespace(
     env: Mapping[str, str] | None = None,
 ) -> DictationBridgeController:
     source_env = os.environ if env is None else env
+    backend = getattr(namespace, "backend", None)
     return DictationBridgeController(
+        backend=get_backend(source_env) if backend in {None, ""} else str(backend),
         cpu=bool(getattr(namespace, "cpu", False)),
         input_device=_parse_input_device(getattr(namespace, "input_device", None)),
         vad=bool(getattr(namespace, "vad", False)),
@@ -624,10 +654,10 @@ def build_bridge_controller_from_namespace(
         debug=bool(getattr(namespace, "debug", False)),
         log_file=str(getattr(namespace, "log_file", "transcriber.debug.log")),
         clipboard=bool(getattr(namespace, "clipboard", True)),
-        e2e_mode=_env_truthy("PARAKEET_E2E_MODE", source_env),
-        e2e_transcript=source_env.get("PARAKEET_E2E_TRANSCRIPT", DEFAULT_E2E_TRANSCRIPT),
-        e2e_start_delay_ms=_env_int("PARAKEET_E2E_START_DELAY_MS", source_env, 0),
-        e2e_stop_delay_ms=_env_int("PARAKEET_E2E_STOP_DELAY_MS", source_env, 0),
+        e2e_mode=_env_truthy("LOCAL_AI_DICTATION_E2E_MODE", source_env),
+        e2e_transcript=source_env.get("LOCAL_AI_DICTATION_E2E_TRANSCRIPT", DEFAULT_E2E_TRANSCRIPT),
+        e2e_start_delay_ms=_env_int("LOCAL_AI_DICTATION_E2E_START_DELAY_MS", source_env, 0),
+        e2e_stop_delay_ms=_env_int("LOCAL_AI_DICTATION_E2E_STOP_DELAY_MS", source_env, 0),
     )
 
 
@@ -649,7 +679,7 @@ def run_bridge_server(namespace: Any) -> int:
     signal.signal(signal.SIGINT, _request_shutdown)
     signal.signal(signal.SIGTERM, _request_shutdown)
 
-    print(f"Parakeet bridge listening on http://{host}:{port}")
+    print(f"Local AI Dictation bridge listening on http://{host}:{port} ({controller.backend})")
     print("Run the Windows app, then use its button or hotkey to start/stop recording.")
 
     try:

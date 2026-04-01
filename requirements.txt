@@ -1,5 +1,6 @@
 # Core runtime (install PyTorch separately per README)
 nemo_toolkit[asr]
+faster-whisper
 pyaudio
 numpy<2.0
 pyperclip
